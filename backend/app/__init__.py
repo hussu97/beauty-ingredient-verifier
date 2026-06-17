@@ -1,0 +1,1 @@
+"""Beauty Product Verifier backend."""

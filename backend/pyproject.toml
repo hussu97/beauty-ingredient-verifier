@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beauty-product-verifier-backend"
+version = "0.1.0"
+description = "FastAPI backend for the Beauty Product Verifier MVP"
+requires-python = ">=3.11"
+dependencies = [
+  "alembic>=1.13",
+  "fastapi>=0.115",
+  "httpx>=0.27",
+  "pillow>=10.0",
+  "pydantic>=2.7",
+  "pydantic-settings>=2.2",
+  "python-multipart>=0.0.9",
+  "rapidfuzz>=3.9",
+  "rich>=13.7",
+  "sqlalchemy>=2.0",
+  "typer>=0.12",
+  "uvicorn[standard]>=0.30"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5"
+]
+data = [
+  "pyarrow>=16.0"
+]
+ml = [
+  "numpy>=1.26",
+  "opencv-python-headless>=4.10",
+  "paddleocr>=2.8",
+  "paddlepaddle>=3.0; python_version < '3.14'",
+  "sentence-transformers>=3.0",
+  "sqlite-vec>=0.1",
+  "zxing-cpp>=2.2"
+]
+postgres = [
+  "psycopg[binary]>=3.2"
+]
+
+[project.scripts]
+beauty-product-verifier = "app.cli:main"
+import-open-beauty-facts = "app.cli:import_open_beauty_facts_entry"
+backfill-open-beauty-facts-images = "app.cli:backfill_open_beauty_facts_images_entry"
+enrich-ingredients = "app.cli:enrich_ingredients_entry"
+index-images = "app.cli:index_images_entry"
+refresh-risk-signals = "app.cli:refresh_risk_signals_entry"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
