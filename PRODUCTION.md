@@ -54,7 +54,7 @@ dist
 
 Set `VITE_API_BASE_URL` to the deployed backend `/api/v1` base URL.
 
-The Vercel app should route all frontend paths to the Vite app, including `/`, `/directory`, `/products/:productCode`, `/ingredients/:ingredientCode`, and `/admin/*`. The directory PLP calls `GET /products/directory/groups` and paginated `POST /products/directory/products` requests on the backend API base.
+The Vercel app should route all frontend paths to the Vite app, including `/`, `/directory`, `/products/:productCode`, `/ingredients/:ingredientCode`, and `/admin/*`. The directory PLP calls searchable `GET /products/directory/groups` requests and paginated `POST /products/directory/products` requests on the backend API base.
 
 Keep `shared/profile-options.json` deployed with both frontend and backend source. It is the controlled clinical profile vocabulary for custom dropdown inputs and backend alias matching; deployments should run the backend and frontend tests after changing it.
 
@@ -89,6 +89,7 @@ The free ML stack is best run locally or as a separate batch worker:
 - Install backend extras with `python -m pip install -e ".[ml,data]"`.
 - Set `BPV_ENABLE_OPTIONAL_ML=true`.
 - After importing older Open Beauty Facts exports, run `beauty-product-verifier backfill-open-beauty-facts-images` before image indexing if product image coverage looks low.
+- Run `beauty-product-verifier apply-product-corrections` after imports when using the built-in source-backed correction library for known incomplete crowdsourced product records.
 - Run `index-images --all --batch-size 25 --download-workers 4` after product imports to populate CLIP embeddings.
 - Use `index-images --status`, `index-images --pause`, and `index-images --resume` for resumable local or worker runs.
 - Prefer parallel downloads over parallel CLIP worker processes for SQLite/local runs. Embedding and writes are intentionally serial to avoid model-memory duplication and SQLite write contention.

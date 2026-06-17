@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Select, desc, func, select
+from sqlalchemy import Select, case, desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import Brand, Category, Product, ProductCategory, ProductIngredient
@@ -49,15 +49,32 @@ def list_products(
 @router.get("/directory/groups", response_model=list[DirectoryGroupOut])
 def list_directory_groups(
     kind: str = Query(default="brand", pattern="^(brand|category)$"),
+    q: str | None = Query(default=None),
     limit: int = Query(default=80, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> list[DirectoryGroupOut]:
     if kind == "brand":
-        rows = db.execute(
+        stmt = (
             select(Brand, func.count(Product.product_code).label("product_count"))
             .join(Product, Product.brand_code == Brand.brand_code)
+        )
+        if q:
+            normalized_query = normalize_text(q)
+            normalized = f"%{normalized_query}%"
+            prefix = f"{normalized_query}%"
+            stmt = stmt.where(Brand.normalized_name.like(normalized))
+            order_by = (
+                case((Brand.normalized_name == normalized_query, 0), else_=1),
+                case((Brand.normalized_name.like(prefix), 0), else_=1),
+                desc("product_count"),
+                Brand.name,
+            )
+        else:
+            order_by = (desc("product_count"), Brand.name)
+        rows = db.execute(
+            stmt
             .group_by(Brand.brand_code)
-            .order_by(desc("product_count"), Brand.name)
+            .order_by(*order_by)
             .limit(limit)
         ).all()
         return [
@@ -70,11 +87,30 @@ def list_directory_groups(
             for brand, product_count in rows
         ]
 
-    rows = db.execute(
+    stmt = (
         select(Category, func.count(ProductCategory.product_code).label("product_count"))
         .join(ProductCategory, ProductCategory.category_code == Category.category_code)
+    )
+    if q:
+        normalized_query = normalize_text(q)
+        normalized = f"%{normalized_query}%"
+        prefix = f"{normalized_query}%"
+        category_name = func.lower(Category.name)
+        stmt = stmt.where((Category.slug.like(normalized)) | (category_name.like(normalized)))
+        order_by = (
+            case((Category.slug == normalized_query, 0), else_=1),
+            case((category_name == normalized_query, 0), else_=1),
+            case((Category.slug.like(prefix), 0), else_=1),
+            case((category_name.like(prefix), 0), else_=1),
+            desc("product_count"),
+            Category.name,
+        )
+    else:
+        order_by = (desc("product_count"), Category.name)
+    rows = db.execute(
+        stmt
         .group_by(Category.category_code)
-        .order_by(desc("product_count"), Category.name)
+        .order_by(*order_by)
         .limit(limit)
     ).all()
     return [

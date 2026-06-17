@@ -3,6 +3,9 @@
 ## 2026-06-18
 
 ### Backend
+- Fixed resumable image indexing so `--all --retry-failed` retries each failed image once per run and exits cleanly when only broken source URLs remain.
+- Added `apply-product-corrections` plus a source-backed MAC Cosmetics correction for `prd_7e395068110222`, replacing the truncated Open Beauty Facts `Allerg` ingredient row with the official Fix+ Setting Spray ingredient list.
+- Added search support to `GET /products/directory/groups` so lower-volume brands/categories can be found by name.
 - Changed the directory products API to return paginated metadata with `items`, `total`, `limit`, and `offset`.
 - Added shared controlled profile vocabulary and alias-aware rule matching so source-backed profile values align with selectable UI options.
 - Added exhaustive risk-rule/profile vocabulary tests covering every trusted rule profile value, selectable profile option, and alias/product-gate matching fixture.
@@ -16,9 +19,12 @@
 - Started the local full pending-image embedding run in a detached `screen` session named `bpv-image-index`.
 
 ### Docs
-- Documented resumable image indexing operations and clarified that source-confidence heuristics are not shown in the scanner UI.
+- Added a TODO to evaluate EWG Skin Deep as a possible product/ingredient enrichment source, with licensing/API checks before implementation.
+- Documented source-backed product corrections, resumable image indexing operations, and clarified that source-confidence heuristics are not shown in the scanner UI.
 
 ### Frontend
+- Changed directory brand/category search to query the backend instead of filtering only the initially loaded high-volume groups.
+- Swapped scanner steps so upload is Step 2, the harm meter is Step 3, and results remain Step 4.
 - Added paginated directory PLP controls with searchable brand/category filters.
 - Standardized responsive behavior across scanner, directory, product detail, and admin surfaces for mobile/tablet layouts.
 - Removed the extra `Done` action from profile dropdown menus.

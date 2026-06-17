@@ -37,7 +37,7 @@ Open `http://127.0.0.1:5173`. The scanner is the first screen; brand/category pr
 
 Profile inputs are controlled custom dropdowns sourced from `shared/profile-options.json`. Free-text profile values from older local storage are canonicalized through aliases when possible and unsupported values are dropped rather than sent to risk rules.
 
-The homepage keeps the consumer flow compact: profile dropdowns, an interactive scale-style harm meter, image upload, and the matched product result. The scan progress bar shows exact browser upload progress and then an indeterminate matching state while the synchronous backend scan pipeline evaluates the image. Directory browsing is paginated and uses adaptive layouts for desktop and mobile.
+The homepage keeps the consumer flow compact: profile dropdowns, image upload, an interactive scale-style harm meter, and the matched product result. The scan progress bar shows exact browser upload progress and then an indeterminate matching state while the synchronous backend scan pipeline evaluates the image. Directory browsing is searchable, paginated, and uses adaptive layouts for desktop and mobile.
 
 ## Free Local ML Stack
 
@@ -72,6 +72,8 @@ index-images --resume
 
 Progress is stored in `backend/storage/image-index-progress.json`. The database remains the source of truth for each image through `product_images.embedding_status`, so interrupted runs resume from pending images. `--download-workers` parallelizes only image downloads; embedding and database writes stay serial to avoid loading multiple CLIP models or fighting SQLite write locks.
 
+When `--retry-failed` is used with `--all`, each failed image is retried once per run. Permanently broken source URLs remain `download-failed` instead of being retried forever.
+
 If a bulk import was created before nested Open Beauty Facts image metadata was supported, repair image rows from stored source payloads:
 
 ```bash
@@ -79,11 +81,18 @@ cd backend
 beauty-product-verifier backfill-open-beauty-facts-images
 ```
 
+If a trusted brand/regulatory source is needed to repair a known incomplete Open Beauty Facts record, apply the source-backed correction library:
+
+```bash
+cd backend
+beauty-product-verifier apply-product-corrections
+```
+
 ## API Surface
 
 - `GET /api/v1/health`
 - `GET /api/v1/products`
-- `GET /api/v1/products/directory/groups`
+- `GET /api/v1/products/directory/groups` - supports `kind`, optional `q`, and `limit`.
 - `POST /api/v1/products/directory/products` - returns `{ items, total, limit, offset }` for paginated PLP views.
 - `GET /api/v1/products/{product_code}`
 - `GET /api/v1/ingredients`
@@ -102,6 +111,7 @@ Install the backend package, then run:
 import-open-beauty-facts --help
 beauty-product-verifier backfill-open-beauty-facts-images --help
 enrich-ingredients --help
+beauty-product-verifier apply-product-corrections --help
 index-images --help
 refresh-risk-signals --help
 beauty-product-verifier --help

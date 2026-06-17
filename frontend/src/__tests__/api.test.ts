@@ -65,6 +65,18 @@ describe("directory API", () => {
     vi.unstubAllGlobals();
   });
 
+  it("passes search text when loading directory groups", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      expect(url).toContain("/products/directory/groups?kind=brand&q=mac");
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.directoryGroups("brand", "mac");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("sends limit and offset for paged directory products", async () => {
     const profile: ClinicalProfile = {
       skin_types: ["sensitive"],

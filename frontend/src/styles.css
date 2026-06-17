@@ -482,9 +482,19 @@ img {
   align-items: start;
 }
 
-.upload-panel {
+.scan-guidance-column,
+.scan-result-column {
+  min-width: 0;
+  display: grid;
+  gap: 18px;
+}
+
+.scan-guidance-column {
   position: sticky;
   top: 96px;
+}
+
+.upload-panel {
   overflow: hidden;
 }
 
@@ -1351,7 +1361,7 @@ img {
     grid-template-columns: 1fr;
   }
 
-  .upload-panel,
+  .scan-guidance-column,
   .detail-side,
   .directory-groups {
     position: static;

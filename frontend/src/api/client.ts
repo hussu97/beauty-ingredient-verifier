@@ -67,8 +67,10 @@ export const api = {
   products: (q?: string) =>
     request<Product[]>(`/products${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   product: (productCode: string) => request<ProductDetail>(`/products/${productCode}`),
-  directoryGroups: (kind: "brand" | "category") =>
-    request<DirectoryGroup[]>(`/products/directory/groups?kind=${kind}`),
+  directoryGroups: (kind: "brand" | "category", q?: string) =>
+    request<DirectoryGroup[]>(
+      `/products/directory/groups?kind=${kind}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+    ),
   directoryProducts: (
     groupKind: "brand" | "category",
     groupCode: string,

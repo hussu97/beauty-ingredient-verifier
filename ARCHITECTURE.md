@@ -39,7 +39,8 @@ The schema keeps external records immutable enough for provenance, while normali
 2. `enrich-ingredients` adds source-backed ingredient metadata and trusted risk rules from public regulatory, scientific, and medical-specialty sources. Rules are expanded onto exact ingredient names and conservative ingredient-name patterns such as fragrance mixtures, then versioned through `source_records`.
 3. `refresh-risk-signals` stores public adverse-event signals as weak evidence, not causation.
 4. `backfill-open-beauty-facts-images` repairs already-imported products by deriving missing `product_images` rows from stored `source_records.payload` image metadata.
-5. `index-images` downloads/caches product images, computes CLIP embeddings with Sentence Transformers when ML extras are installed, stores portable JSON vectors in `image_embeddings`, and mirrors them into sqlite-vec when available. Long indexing runs are resumable: DB image statuses preserve per-image state, `storage/image-index-progress.json` records run progress, and `storage/image-index.pause` lets a running batch pause cleanly. Downloads can be prefetched in parallel with `--download-workers`, while embedding and DB writes stay serial for SQLite/local stability.
+5. `apply-product-corrections` applies source-backed product repairs for known incomplete crowdsourced records, preserving the original source record while pointing corrected product fields and ingredient links at the trusted correction source.
+6. `index-images` downloads/caches product images, computes CLIP embeddings with Sentence Transformers when ML extras are installed, stores portable JSON vectors in `image_embeddings`, and mirrors them into sqlite-vec when available. Long indexing runs are resumable: DB image statuses preserve per-image state, `storage/image-index-progress.json` records run progress, and `storage/image-index.pause` lets a running batch pause cleanly. Downloads can be prefetched in parallel with `--download-workers`, while embedding and DB writes stay serial for SQLite/local stability. Failed image retries are tracked within each run so permanently broken source URLs are attempted once per retry run, then left as `download-failed`.
 
 Open Beauty Facts API calls are allowed only for user-triggered, one-off barcode lookups. Bulk ingestion uses exports.
 
@@ -60,13 +61,13 @@ Each step contributes reasons and confidence. If confidence is low, the UI shows
 The frontend is scanner-first. The `/` route keeps the core user flow on one page:
 
 - Review or update the optional clinical profile, with default behavior disclosed.
-- Read the scale-style harm meter; selecting a warning level reveals that level's meaning without adding extra result-dashboard copy.
 - Upload a product image and see scan progress. Browser upload progress is exact; product matching is shown as an indeterminate analysis state because `POST /api/v1/scans` is currently synchronous.
+- Read the scale-style harm meter; selecting a warning level reveals that level's meaning without adding extra result-dashboard copy.
 - Show the single top product match inline.
 - Automatically evaluate risk for the matched product and active profile.
 - Render product details and an ingredient list that flags matched source-backed issues, side effects, and read-more evidence links.
 
-The `/directory` route is a user-facing PLP for brand/category browsing. It loads brand or category groups, supports searchable group filters, ranks products within the selected group by source-backed risk summaries for the active profile, and pages results through the `items/total/limit/offset` directory API response. Product detail pages reuse the scanner product-risk panel and include an editable profile form; changing the profile automatically refreshes the product warning summary.
+The `/directory` route is a user-facing PLP for brand/category browsing. It loads brand or category groups, sends group search text to the backend so matches outside the default high-volume group list are discoverable, ranks products within the selected group by source-backed risk summaries for the active profile, and pages results through the `items/total/limit/offset` directory API response. Product detail pages reuse the scanner product-risk panel and include an editable profile form; changing the profile automatically refreshes the product warning summary.
 
 The frontend uses shared responsive rules across scanner, directory, PDP, and admin surfaces: desktop can use split panes and sticky context panels, while tablet/mobile stacks filters before results, keeps controls full-width, and turns product rows into compact two-line/two-column scan-friendly rows.
 

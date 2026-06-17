@@ -19,4 +19,8 @@ Product data starts with Open Beauty Facts bulk exports and the Open Food Facts 
 - Sentence Transformers image search docs for CLIP image embeddings.
 - sqlite-vec Python and `vec0` docs for local SQLite vector search.
 
+## TODO
+
+- Investigate EWG Skin Deep (`ewg.org/skindeep`) as an additional product database and ingredient/risk reference. Before implementing any adapter, verify whether EWG provides an API, bulk/download option, licensing terms, attribution requirements, and whether automated collection is allowed. Treat EWG as a potential enrichment/provenance source rather than a replacement for Open Beauty Facts unless its terms support broader product ingestion.
+
 The app treats source data as evidence with confidence, not as medical certainty.

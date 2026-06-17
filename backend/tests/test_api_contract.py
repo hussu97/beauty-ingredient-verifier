@@ -78,6 +78,11 @@ def test_directory_groups_and_ranked_products(client):
         assert second_body["offset"] == 1
         assert len(second_body["items"]) <= 1
 
+    searched = client.get(f"/api/v1/products/directory/groups?kind=brand&q={body[0]['name'][:3]}")
+    assert searched.status_code == 200
+    searched_body = searched.json()
+    assert any(group["code"] == body[0]["code"] for group in searched_body)
+
 
 def test_import_status_and_sources(client):
     status = client.get("/api/v1/imports/status")

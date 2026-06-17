@@ -31,7 +31,7 @@ export default function UploadPanel({ isUploading, onUpload, progress }: Props) 
       transition={{ duration: 0.45 }}
     >
       <div className="scanner-copy">
-        <span className="eyebrow">Step 3 · scan</span>
+        <span className="eyebrow">Step 2 · scan</span>
         <h2>Upload the front of the product</h2>
         <p>Barcode and image matching run locally first. If confidence is low, the app still shows what it can read.</p>
       </div>

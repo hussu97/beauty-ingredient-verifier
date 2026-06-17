@@ -22,6 +22,7 @@ from app.services.importers.open_beauty_facts import (
     backfill_open_beauty_facts_images,
     import_open_beauty_facts,
 )
+from app.services.product_corrections import apply_source_backed_product_corrections
 
 app = typer.Typer(help="Beauty Product Verifier maintenance CLI")
 console = Console()
@@ -71,6 +72,14 @@ def enrich_ingredients_command(
         count = enrich_ingredients(db, pubchem_live=pubchem_live, limit=limit)
         db.commit()
     console.print(f"Enriched {count} ingredient/risk record(s).")
+
+
+@app.command("apply-product-corrections")
+def apply_product_corrections_command() -> None:
+    with _session() as db:
+        count = apply_source_backed_product_corrections(db)
+        db.commit()
+    console.print(f"Applied {count} source-backed product correction(s).")
 
 
 @app.command("index-images")
@@ -173,6 +182,10 @@ def backfill_open_beauty_facts_images_entry() -> None:
 
 def enrich_ingredients_entry() -> None:
     _run_single_command("enrich-ingredients")
+
+
+def apply_product_corrections_entry() -> None:
+    _run_single_command("apply-product-corrections")
 
 
 def index_images_entry() -> None:

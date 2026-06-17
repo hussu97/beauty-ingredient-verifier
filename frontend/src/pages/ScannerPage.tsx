@@ -40,18 +40,22 @@ export default function ScannerPage() {
       </section>
 
       <ProfilePanel profile={profile} onChange={setProfile} />
-      <HarmMeter />
 
       <div className="scan-workflow">
-        <UploadPanel
-          isUploading={scanMutation.isPending}
-          onUpload={(file) => scanMutation.mutate(file)}
-          progress={scanProgress}
-        />
-        {scanMutation.error && (
-          <div className="error-banner">{scanMutation.error.message}</div>
-        )}
-        <ResultPanel scan={scan} profile={profile} />
+        <div className="scan-guidance-column">
+          <UploadPanel
+            isUploading={scanMutation.isPending}
+            onUpload={(file) => scanMutation.mutate(file)}
+            progress={scanProgress}
+          />
+          <HarmMeter />
+        </div>
+        <div className="scan-result-column">
+          {scanMutation.error && (
+            <div className="error-banner">{scanMutation.error.message}</div>
+          )}
+          <ResultPanel scan={scan} profile={profile} />
+        </div>
       </div>
     </div>
   );

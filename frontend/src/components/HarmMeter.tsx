@@ -10,7 +10,7 @@ export default function HarmMeter() {
     <section className="harm-meter-section">
       <div className="section-heading">
         <div>
-          <span className="eyebrow">Step 2 · harm meter</span>
+          <span className="eyebrow">Step 3 · harm meter</span>
           <h2>How warning levels read</h2>
           <p>The meter explains the severity language used in scan results and product pages.</p>
         </div>

@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.db.models import ImageEmbedding, Product, ProductImage
 from app.services.codes import make_code
 from app.services.image_index import (
+    ImageDownloadResult,
     _short_barcode_unsplit_fallback_url,
     image_index_status,
     index_images,
@@ -111,6 +112,46 @@ def test_resumable_image_index_honors_pause_before_work(
     assert (tmp_path / "image-index-progress.json").exists()
 
     set_image_index_paused(False)
+
+
+def test_resumable_image_index_retries_failed_images_once_per_run(
+    db_session: Session,
+    tmp_path: Path,
+    monkeypatch,
+):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "enable_optional_ml", True)
+    monkeypatch.setattr(settings, "storage_dir", tmp_path)
+
+    for existing_image in db_session.scalars(select(ProductImage)).all():
+        existing_image.embedding_status = "ignored-for-test"
+
+    product = db_session.scalar(select(Product).limit(1))
+    image = ProductImage(
+        image_code=make_code("img", "retry-failed-once"),
+        product_code=product.product_code,
+        kind="front",
+        url="https://images.openbeautyfacts.org/missing.jpg",
+        embedding_status="download-failed",
+    )
+    db_session.add(image)
+    db_session.flush()
+
+    attempts: list[str] = []
+
+    def fake_resolve_image_target(target):
+        attempts.append(target.image_code)
+        return ImageDownloadResult(image_code=target.image_code, path=None, url=target.url)
+
+    monkeypatch.setattr("app.services.image_index._resolve_image_target", fake_resolve_image_target)
+
+    result = run_resumable_image_index(db_session, batch_size=1, retry_failed=True)
+
+    assert result.state == "complete"
+    assert result.attempted == 1
+    assert result.failed == 1
+    assert attempts == [image.image_code]
+    assert image.embedding_status == "download-failed"
 
 
 def test_scan_uses_image_embedding_candidates(

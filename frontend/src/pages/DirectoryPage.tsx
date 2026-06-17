@@ -32,17 +32,13 @@ export default function DirectoryPage() {
   const [page, setPage] = useState(1);
   const [profile, setProfile] = useState<ClinicalProfile>(() => loadProfile());
   const profileKey = JSON.stringify(profile);
+  const normalizedGroupSearch = groupSearch.trim();
 
   const groupsQuery = useQuery({
-    queryKey: ["directory-groups", kind],
-    queryFn: () => api.directoryGroups(kind),
+    queryKey: ["directory-groups", kind, normalizedGroupSearch],
+    queryFn: () => api.directoryGroups(kind, normalizedGroupSearch || undefined),
   });
   const groups = useMemo(() => groupsQuery.data ?? [], [groupsQuery.data]);
-  const filteredGroups = useMemo(() => {
-    const normalized = groupSearch.trim().toLowerCase();
-    if (!normalized) return groups;
-    return groups.filter((group) => group.name.toLowerCase().includes(normalized));
-  }, [groupSearch, groups]);
   const selectedGroup = groups.find((group) => group.code === selectedCode) ?? groups[0] ?? null;
 
   useEffect(() => {
@@ -120,7 +116,7 @@ export default function DirectoryPage() {
           </label>
           <div className="group-list">
             {groupsQuery.isLoading && <div className="loading-line">Loading groups...</div>}
-            {filteredGroups.map((group: DirectoryGroup) => (
+            {groups.map((group: DirectoryGroup) => (
               <button
                 className={selectedGroup?.code === group.code ? "group-row active" : "group-row"}
                 key={group.code}
@@ -131,7 +127,7 @@ export default function DirectoryPage() {
                 <small>{group.product_count} products</small>
               </button>
             ))}
-            {!groupsQuery.isLoading && filteredGroups.length === 0 && (
+            {!groupsQuery.isLoading && groups.length === 0 && (
               <div className="empty-state compact">
                 No {kind === "brand" ? "brands" : "categories"} match that search.
               </div>

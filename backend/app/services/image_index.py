@@ -34,6 +34,7 @@ class ImageIndexBatchResult:
     ml_disabled: int = 0
     paused: bool = False
     last_image_code: str | None = None
+    attempted_image_codes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -267,15 +268,19 @@ def index_image_batch(
     *,
     retry_failed: bool = True,
     download_workers: int = 1,
+    exclude_image_codes: set[str] | None = None,
 ) -> ImageIndexBatchResult:
     settings = get_settings()
     statuses = _eligible_statuses(retry_failed=retry_failed)
-    images = db.scalars(
+    stmt = (
         select(ProductImage)
         .where(ProductImage.embedding_status.in_(statuses))
         .order_by(ProductImage.created_at, ProductImage.image_code)
         .limit(limit)
-    ).all()
+    )
+    if exclude_image_codes:
+        stmt = stmt.where(ProductImage.image_code.not_in(exclude_image_codes))
+    images = db.scalars(stmt).all()
     attempted = 0
     indexed = 0
     download_failed = 0
@@ -284,6 +289,7 @@ def index_image_batch(
     last_image_code = None
     active_images: list[ProductImage] = []
     download_targets: list[ImageDownloadTarget] = []
+    attempted_image_codes: list[str] = []
     for image in images:
         if image_index_pause_requested():
             return ImageIndexBatchResult(
@@ -326,6 +332,7 @@ def index_image_batch(
         download_result = download_results.get(image.image_code)
         path = download_result.path if download_result else None
         attempted += 1
+        attempted_image_codes.append(image.image_code)
         last_image_code = image.image_code
         if path is None:
             image.embedding_status = "download-failed"
@@ -358,6 +365,7 @@ def index_image_batch(
         ml_unavailable=ml_unavailable,
         ml_disabled=ml_disabled,
         last_image_code=last_image_code,
+        attempted_image_codes=tuple(attempted_image_codes),
     )
 
 
@@ -388,6 +396,7 @@ def run_resumable_image_index(
     failed = 0
     batches = 0
     last_image_code = None
+    attempted_image_codes: set[str] = set()
     state = "running"
 
     def write_progress(next_state: str) -> None:
@@ -432,6 +441,7 @@ def run_resumable_image_index(
             limit=remaining,
             retry_failed=retry_failed,
             download_workers=download_workers,
+            exclude_image_codes=attempted_image_codes if retry_failed else None,
         )
         db.commit()
         if result.attempted == 0:
@@ -443,6 +453,7 @@ def run_resumable_image_index(
         attempted += result.attempted
         indexed += result.indexed
         failed += result.download_failed + result.ml_unavailable + result.ml_disabled
+        attempted_image_codes.update(result.attempted_image_codes)
         last_image_code = result.last_image_code or last_image_code
         state = "paused" if result.paused else "running"
         write_progress(state)
