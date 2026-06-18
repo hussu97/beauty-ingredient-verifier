@@ -1,10 +1,9 @@
-import json
-
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
     CanonicalTerm,
+    Category,
     Product,
     ProductImage,
     ProductIngredient,
@@ -12,7 +11,7 @@ from app.db.models import (
     SourceRecord,
     SourceRecordFact,
 )
-from app.services.importers.ewg_skin_deep import import_ewg_skin_deep
+from app.services.importers.ewg_skin_deep import import_ewg_product_payload
 from app.services.importers.open_beauty_facts import (
     backfill_open_beauty_facts_images,
     import_open_beauty_facts,
@@ -266,8 +265,7 @@ def test_backfill_open_beauty_facts_images_repairs_existing_source_records(db_se
     )
 
 
-def test_ewg_import_is_idempotent_and_links_source_terms(db_session: Session, tmp_path):
-    source_path = tmp_path / "ewg-products.jsonl"
+def test_ewg_payload_import_is_idempotent_and_links_source_terms(db_session: Session):
     payload = {
         "ewg_product_id": "652656",
         "source_url": "https://www.ewg.org/skindeep/products/652656-Test/",
@@ -291,11 +289,10 @@ def test_ewg_import_is_idempotent_and_links_source_terms(db_session: Session, tm
             },
         ],
     }
-    source_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
-    counts = import_ewg_skin_deep(db_session, str(source_path), limit=10)
+    imported = import_ewg_product_payload(db_session, payload)
     db_session.commit()
-    second_counts = import_ewg_skin_deep(db_session, str(source_path), limit=10)
+    second_imported = import_ewg_product_payload(db_session, payload)
     db_session.flush()
 
     links = db_session.scalars(
@@ -309,12 +306,13 @@ def test_ewg_import_is_idempotent_and_links_source_terms(db_session: Session, tm
         )
     )
 
-    assert counts == {"products": 1, "ingredients": 0, "skipped": 0}
-    assert second_counts == {"products": 1, "ingredients": 0, "skipped": 0}
+    assert imported is not None
+    assert second_imported is not None
     assert product is not None
     assert len(links) == 1
     assert links[0].match_method in {"new_ewg_product", "brand_name_ingredient_fuzzy"}
     assert concern is not None
+    assert db_session.scalar(select(Category).where(Category.slug == "moisturizers")) is not None
     assert db_session.scalar(
         select(func.count())
         .select_from(SourceRecordFact)
@@ -326,7 +324,7 @@ def test_ewg_import_is_idempotent_and_links_source_terms(db_session: Session, tm
     assert any(match["evidence_kind"] == "ewg-skin-deep-concern" for match in result["matched_ingredients"])
 
 
-def test_ewg_import_merges_by_barcode_with_open_beauty_facts_product(db_session: Session, tmp_path):
+def test_ewg_payload_merges_by_barcode_with_open_beauty_facts_product(db_session: Session):
     existing = import_product_payload(
         db_session,
         {
@@ -341,7 +339,6 @@ def test_ewg_import_merges_by_barcode_with_open_beauty_facts_product(db_session:
     )
     db_session.flush()
     assert existing is not None
-    source_path = tmp_path / "ewg-products.jsonl"
     payload = {
         "ewg_product_id": "barcode-match",
         "barcode": "0018787788059",
@@ -350,10 +347,9 @@ def test_ewg_import_merges_by_barcode_with_open_beauty_facts_product(db_session:
         "category": "Bar Soap",
         "ingredients": [{"name": "Organic Coconut Oil"}],
     }
-    source_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
     before_products = db_session.scalar(select(func.count()).select_from(Product))
 
-    import_ewg_skin_deep(db_session, str(source_path), limit=10)
+    import_ewg_product_payload(db_session, payload)
     db_session.flush()
 
     product = db_session.scalar(select(Product).where(Product.barcode == "0018787788059"))

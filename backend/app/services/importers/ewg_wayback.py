@@ -8,9 +8,8 @@ cosmetics/beauty database, so every ``/skindeep/products/`` URL is a beauty
 product — the CDX index hands us the whole catalogue directly, no category
 crawling required.
 
-The archived HTML is parsed into the same :class:`PageSnapshot` the browser
-scraper produces, so the existing ``parse_*`` / ``import_*`` pipeline is reused
-unchanged.
+The archived HTML is parsed into a :class:`PageSnapshot`, then fed through the
+shared ``parse_*`` / ``import_*`` EWG pipeline.
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import Product, SourceRecord
-from app.services.importers.ewg_public_scraper import (
+from app.services.importers.ewg_parser import (
     INGREDIENT_PATH_RE,
     PRODUCT_PATH_RE,
     PageSnapshot,
@@ -44,7 +43,6 @@ from app.services.importers.ewg_skin_deep import (
     import_ewg_ingredient_payload,
     import_ewg_product_payload,
 )
-from app.services.normalization import normalize_text, split_ewg_ingredients
 
 CDX_API = "http://web.archive.org/cdx/search/cdx"
 WAYBACK_RAW = "https://web.archive.org/web/{timestamp}id_/{url}"
@@ -90,8 +88,8 @@ def iter_cdx_originals(
     id_regex: re.Pattern[str],
     from_date: str | None = None,
     page_size: int = 20000,
-) -> Iterator[str]:
-    """Yield distinct archived EWG page URLs, paginating the CDX index.
+) -> Iterator[tuple[str, str]]:
+    """Yield distinct archived EWG page URLs and exact capture timestamps.
 
     Filters to successful HTML captures (``statuscode:200``) of real
     product/ingredient pages, de-duplicating http/https + trailing-slash variants
@@ -104,7 +102,7 @@ def iter_cdx_originals(
         params: dict[str, Any] = {
             "url": url_pattern,
             "output": "json",
-            "fl": "original",
+            "fl": "original,timestamp",
             "filter": ["statuscode:200", "mimetype:text/html"],
             "collapse": "urlkey",
             "limit": str(page_size),
@@ -117,7 +115,7 @@ def iter_cdx_originals(
         response = client.get(CDX_API, params=params, timeout=180.0)
         response.raise_for_status()
         rows = response.json() or []
-        if rows and rows[0] == ["original"]:
+        if rows and rows[0] == ["original", "timestamp"]:
             rows = rows[1:]
 
         next_key: str | None = None
@@ -134,6 +132,7 @@ def iter_cdx_originals(
             if not row:
                 continue
             original = row[0]
+            timestamp = row[1] if len(row) > 1 else LATEST_TIMESTAMP
             if _looks_like_junk(original) or not id_regex.search(original):
                 continue
             key = re.sub(r"^https?://", "", original).rstrip("/").lower()
@@ -141,7 +140,7 @@ def iter_cdx_originals(
                 continue
             seen.add(key)
             emitted += 1
-            yield original
+            yield original, timestamp
 
         if not next_key or (emitted == 0 and not data_rows):
             break
@@ -153,6 +152,26 @@ def snapshot_from_html(html: str, url: str) -> PageSnapshot:
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
+    metadata: dict[str, str] = {}
+    for meta in soup.select("meta[name], meta[property]"):
+        key = str(meta.get("name") or meta.get("property") or "").strip().lower()
+        value = str(meta.get("content") or "").strip()
+        if key and value:
+            metadata[key] = value
+    for script in soup.select('script[type="application/ld+json"]'):
+        try:
+            payload = json.loads(script.get_text(strip=True) or "{}")
+        except json.JSONDecodeError:
+            continue
+        items = payload if isinstance(payload, list) else [payload]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for key in ("gtin14", "gtin13", "gtin12", "gtin8", "gtin", "upc", "ean", "sku"):
+                value = item.get(key)
+                if value not in (None, ""):
+                    metadata[str(key).lower()] = str(value)
+
     for tag in soup(["script", "style", "noscript", "template"]):
         tag.decompose()
 
@@ -172,47 +191,15 @@ def snapshot_from_html(html: str, url: str) -> PageSnapshot:
         h.get_text(" ", strip=True) for h in soup.select("h1,h2,h3") if h.get_text(strip=True)
     ]
     return PageSnapshot(
-        url=url, title=title, h1=h1, text=text, links=links, images=images, headings=headings
+        url=url,
+        title=title,
+        h1=h1,
+        text=text,
+        links=links,
+        images=images,
+        headings=headings,
+        metadata=metadata,
     )
-
-
-def _fusion_normalize_product(payload: dict[str, Any]) -> dict[str, Any]:
-    """Clean the ingredient list against the authoritative packaging INCI.
-
-    The structured per-ingredient parse can pick up stray UI text on archived
-    pages. The packaging INCI list is clean and uses the same vocabulary as Open
-    Beauty Facts, so we keep only structured rows (which carry EWG hazard scores)
-    whose name actually appears in the INCI, and otherwise fall back to the INCI
-    names. This guarantees real, OBF-normalizable ingredients for source fusion.
-    """
-    inci = split_ewg_ingredients(payload.get("ingredients_from_packaging") or "")
-    if not inci:
-        return payload
-    inci_norm = [normalize_text(name) for name in inci]
-    inci_tokens = [set(name.split()) for name in inci_norm]
-
-    def _matches(name: str | None) -> bool:
-        target = normalize_text(name)
-        if not target:
-            return False
-        target_tokens = set(target.split())
-        for norm, tokens in zip(inci_norm, inci_tokens):
-            if not norm:
-                continue
-            if target == norm or target in norm or norm in target:
-                return True
-            if target_tokens and tokens:
-                overlap = len(target_tokens & tokens) / len(target_tokens | tokens)
-                if overlap >= 0.5:
-                    return True
-        return False
-
-    validated = [row for row in (payload.get("ingredients") or []) if _matches(row.get("name"))]
-    if len(validated) >= max(3, len(inci) // 2):
-        payload["ingredients"] = validated
-    else:
-        payload["ingredients"] = [{"name": name, "rank": i} for i, name in enumerate(inci, 1)]
-    return payload
 
 
 def is_generic_listing(snapshot: PageSnapshot) -> bool:
@@ -225,21 +212,35 @@ def is_generic_listing(snapshot: PageSnapshot) -> bool:
     return not has_score and "|" not in (snapshot.title or "")
 
 
-def fetch_latest_snapshot(client: httpx.Client, original: str) -> PageSnapshot | None:
-    """Fetch the most recent archived capture of a page as a PageSnapshot."""
-    raw_url = WAYBACK_RAW.format(timestamp=LATEST_TIMESTAMP, url=original)
+def fetch_snapshot_with_reason(
+    client: httpx.Client, original: str, timestamp: str = LATEST_TIMESTAMP
+) -> tuple[PageSnapshot | None, str | None]:
+    """Fetch an archived capture and return a machine-readable failure bucket."""
+    raw_url = WAYBACK_RAW.format(timestamp=timestamp, url=original)
     try:
         response = client.get(raw_url, timeout=60.0, follow_redirects=True)
     except httpx.HTTPError:
-        return None
-    if response.status_code != 200 or not response.text:
-        return None
+        return None, "fetch_http_errors"
+    if response.status_code != 200:
+        return None, "fetch_bad_status"
+    if not response.text:
+        return None, "fetch_empty"
     # Resolve to the actual archived URL Wayback redirected to, falling back to
     # the requested original so downstream IDs/links stay on ewg.org.
     resolved = _deprefix(str(response.url)) or original
     snapshot = snapshot_from_html(response.text, resolved)
-    if is_challenge_snapshot(snapshot) or is_generic_listing(snapshot):
-        return None
+    if is_challenge_snapshot(snapshot):
+        return None, "fetch_challenges"
+    if is_generic_listing(snapshot):
+        return None, "fetch_generic"
+    return snapshot, None
+
+
+def fetch_snapshot(
+    client: httpx.Client, original: str, timestamp: str = LATEST_TIMESTAMP
+) -> PageSnapshot | None:
+    """Fetch an archived capture of a page as a PageSnapshot."""
+    snapshot, _reason = fetch_snapshot_with_reason(client, original, timestamp)
     return snapshot
 
 
@@ -296,6 +297,12 @@ def import_ewg_from_wayback(
         "skipped_existing": 0,
         "skipped": 0,
         "fetch_failures": 0,
+        "fetch_http_errors": 0,
+        "fetch_bad_status": 0,
+        "fetch_empty": 0,
+        "fetch_challenges": 0,
+        "fetch_generic": 0,
+        "fetch_worker_errors": 0,
     }
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -317,9 +324,14 @@ def import_ewg_from_wayback(
         state = {"processed_since_commit": 0, "imported": 0}
         workers = max(1, fetch_workers)
 
-        def _ingest(snapshot: PageSnapshot | None) -> None:
+        def _record_fetch_failure(reason: str | None) -> None:
+            counts["fetch_failures"] += 1
+            if reason and reason in counts:
+                counts[reason] += 1
+
+        def _ingest(snapshot: PageSnapshot | None, reason: str | None = None) -> None:
             if snapshot is None:
-                counts["fetch_failures"] += 1
+                _record_fetch_failure(reason)
                 return
             if not path_re.search(snapshot.url):
                 counts["skipped"] += 1
@@ -346,24 +358,28 @@ def import_ewg_from_wayback(
 
         with httpx.Client(headers=headers) as client:
 
-            def _candidates() -> Iterator[str]:
+            def _candidates() -> Iterator[tuple[str, str]]:
                 for original in iter_cdx_originals(
                     client, url_pattern=url_pattern, id_regex=id_regex, from_date=from_date
                 ):
-                    if skip_existing and _external_id_from_url(original) in existing:
+                    original_url, timestamp = original
+                    if skip_existing and _external_id_from_url(original_url) in existing:
                         counts["skipped_existing"] += 1
+                        if progress is not None:
+                            progress(counts)
                         continue
-                    yield original
+                    yield original_url, timestamp
 
-            def _fetch(original: str) -> PageSnapshot | None:
+            def _fetch(item: tuple[str, str]) -> tuple[PageSnapshot | None, str | None]:
                 # Per-worker delay keeps the aggregate request rate polite.
                 if request_delay:
                     time.sleep(request_delay)
-                return fetch_latest_snapshot(client, original)
+                original_url, timestamp = item
+                return fetch_snapshot_with_reason(client, original_url, timestamp)
 
             source = _candidates()
             exhausted = False
-            inflight: dict[Any, str] = {}
+            inflight: dict[Any, tuple[str, str]] = {}
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
 
@@ -390,12 +406,13 @@ def import_ewg_from_wayback(
                     for future in done:
                         inflight.pop(future, None)
                         try:
-                            snapshot = future.result()
+                            snapshot, reason = future.result()
                         except Exception:
                             counts["fetch_failures"] += 1
+                            counts["fetch_worker_errors"] += 1
                             continue
                         # DB import happens here, in the main thread, serially.
-                        _ingest(snapshot)
+                        _ingest(snapshot, reason)
         if not dry_run:
             db.commit()
 
@@ -406,7 +423,7 @@ def import_ewg_from_wayback(
         record_type="product",
         cap=max_products,
         kind="product",
-        parse=lambda snapshot: _fusion_normalize_product(parse_product_snapshot(snapshot)),
+        parse=parse_product_snapshot,
         do_import=lambda payload: import_ewg_product_payload(
             db, payload, review_threshold=review_threshold, dry_run=False
         )
@@ -466,7 +483,7 @@ def backfill_wayback_images(
         def _fetch(item: tuple[str, str]) -> tuple[str, PageSnapshot | None]:
             if request_delay:
                 time.sleep(request_delay)
-            return item[0], fetch_latest_snapshot(client, item[1])
+            return item[0], fetch_snapshot(client, item[1])
 
         source = iter(targets)
         exhausted = False

@@ -21,9 +21,6 @@ class Settings(BaseSettings):
     image_embedding_model: str = "sentence-transformers/clip-ViT-B-32"
     image_download_timeout_seconds: float = 20.0
     max_scan_upload_mb: int = Field(default=12, ge=1, le=100)
-    ewg_source_path: str | None = None
-    ewg_api_base_url: str | None = None
-    ewg_api_key: str | None = None
     ewg_attribution_text: str = "Contains information from EWG Skin Deep."
     ewg_user_agent: str = "BeautyProductVerifier/0.1 (local-dev@example.com)"
 

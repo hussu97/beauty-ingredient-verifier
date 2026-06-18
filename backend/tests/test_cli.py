@@ -7,8 +7,8 @@ from app import cli
     ("entrypoint_name", "command_name"),
     [
         ("import_open_beauty_facts_entry", "import-open-beauty-facts"),
-        ("import_ewg_skin_deep_entry", "import-ewg-skin-deep"),
-        ("scrape_ewg_skin_deep_entry", "scrape-ewg-skin-deep"),
+        ("import_ewg_wayback_entry", "import-ewg-wayback"),
+        ("backfill_ewg_wayback_images_entry", "backfill-ewg-wayback-images"),
     ],
 )
 def test_single_command_entrypoints_prepend_typer_command(monkeypatch, entrypoint_name, command_name):

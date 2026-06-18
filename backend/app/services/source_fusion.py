@@ -55,6 +55,68 @@ CONCERN_LABELS = {
     "persistence-bioaccumulation": "Persistence / bioaccumulation",
 }
 
+CATEGORY_ALIASES = {
+    "anti aging": "anti-aging",
+    "baby sunscreen": "baby-sunscreens",
+    "bar soap": "bar-soaps",
+    "bath oil salts soak": "bath-oils-salts-and-soaks",
+    "bb cream": "bb-creams",
+    "blush": "blushes",
+    "body firming lotion": "body-firming-lotions",
+    "body oil": "body-oils",
+    "body wash cleanser": "body-washes",
+    "bronzer highlighter": "bronzers-and-highlighters",
+    "cc cream": "cc-creams",
+    "concealer": "concealers",
+    "conditioner": "conditioners",
+    "deodorant": "deodorants",
+    "eye cream treatment": "eye-creams-and-treatments",
+    "eye liner": "eye-liner",
+    "eye makeup remover": "eye-makeup-removers",
+    "eye shadow": "eye-shadow",
+    "face powder": "face-powders",
+    "facial cleanser": "facial-cleansers",
+    "facial moisturizer treatment": "facial-moisturizers",
+    "facial moisturizer": "facial-moisturizers",
+    "facial sunscreen": "facial-sunscreens",
+    "foundation": "foundations",
+    "hair color and bleaching": "hair-colorants",
+    "hair relaxer": "hair-relaxers",
+    "hair spray": "hair-sprays",
+    "hair styling aid": "hair-styling-products",
+    "hand cream": "hand-creams",
+    "lip balm": "lip-balms",
+    "lip gloss": "lip-glosses",
+    "lip liner": "lip-liner",
+    "lip plumper": "lip-plumpers",
+    "lipstick": "lipsticks",
+    "mascara": "mascaras",
+    "moisturizer": "moisturizers",
+    "nail polish": "nail-polishes",
+    "nail polish remover": "nail-polish-removers",
+    "shampoo": "shampoos",
+    "shaving cream": "shaving-creams",
+    "soap": "soaps",
+    "sunscreen": "sunscreens",
+    "toothpaste": "toothpaste",
+}
+
+CATEGORY_SLUG_ALIASES = {
+    "en-eye-liner": "eye-liner",
+    "en-eye-liners": "eye-liner",
+    "en-facial-cleansers": "facial-cleansers",
+    "en-facial-moisturizer": "facial-moisturizers",
+    "en-facial-moisturizers": "facial-moisturizers",
+    "en-hair-colorants": "hair-colorants",
+    "en-lip-balms": "lip-balms",
+    "en-lipsticks": "lipsticks",
+    "en-nail-polishes": "nail-polishes",
+    "en-shampoos": "shampoos",
+    "en-soaps": "soaps",
+    "en-sunscreens": "sunscreens",
+    "en-toothpaste": "toothpaste",
+}
+
 
 def as_list(value: Any) -> list[str]:
     if value is None:
@@ -95,6 +157,17 @@ def canonical_concern_slug(raw_value: str) -> str:
     }.get(slug, slug)
 
 
+def canonical_category_slug(raw_value: str) -> str:
+    clean = str(raw_value or "").strip()
+    if clean.startswith("en:"):
+        clean = clean[3:]
+    normalized = normalize_text(clean)
+    if normalized in CATEGORY_ALIASES:
+        return CATEGORY_ALIASES[normalized]
+    slug = slugify(clean)
+    return CATEGORY_SLUG_ALIASES.get(slug, slug)
+
+
 def canonical_term_label(term_type: str, raw_value: str, slug: str) -> str:
     if term_type == "concern":
         return CONCERN_LABELS.get(slug, raw_value.strip().title())
@@ -113,7 +186,12 @@ def upsert_canonical_term(
     clean = str(raw_value or "").strip()
     if not clean:
         return None
-    slug = canonical_concern_slug(clean) if term_type == "concern" else slugify(clean)
+    if term_type == "concern":
+        slug = canonical_concern_slug(clean)
+    elif term_type == "category":
+        slug = canonical_category_slug(clean)
+    else:
+        slug = slugify(clean)
     term = db.scalar(
         select(CanonicalTerm).where(
             CanonicalTerm.term_type == term_type,

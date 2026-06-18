@@ -3,7 +3,7 @@
 Product data starts with Open Beauty Facts bulk exports and the Open Food Facts API documentation. Ingredient and risk enrichment use public, source-backed references:
 
 - Open Beauty Facts/Open Food Facts product database and API docs.
-- EWG Skin Deep product and ingredient data through authorized export/API access or local personal-use browser collection. The app stores raw EWG source payloads, keeps unmodeled scraped facts in `source_record_facts`, normalizes product attributes and concern buckets into canonical terms, and keeps EWG provenance separate from Open Beauty Facts provenance.
+- EWG Skin Deep product and ingredient data through archive.org Wayback captures. The app stores raw EWG source payloads, keeps unmodeled parsed facts in `source_record_facts`, normalizes product attributes and concern buckets into canonical terms, and keeps EWG provenance separate from Open Beauty Facts provenance.
 - EU CosIng and SCCS references.
 - Cosmetic Ingredient Review reports.
 - FDA cosmetic allergen guidance.

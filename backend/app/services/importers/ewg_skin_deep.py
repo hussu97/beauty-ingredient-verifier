@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import csv
-import gzip
 import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Iterable
 
 from rapidfuzz import fuzz
@@ -28,11 +25,11 @@ from app.services.codes import make_code
 from app.services.normalization import (
     canonical_ingredient_name,
     normalize_text,
-    slugify,
     split_ewg_ingredients,
 )
 from app.services.source_fusion import (
     as_list,
+    canonical_category_slug,
     canonical_concern_slug,
     link_ingredient_source,
     link_ingredient_term,
@@ -56,6 +53,47 @@ INGREDIENT_TEXT_FIELDS = (
     "ingredient_list",
 )
 CATEGORY_FIELDS = ("category", "categories", "product_type", "product_types")
+
+
+def normalize_ewg_product_payload_for_fusion(payload: dict[str, Any]) -> dict[str, Any]:
+    """Align EWG parsed ingredients with the packaging INCI vocabulary used by OBF."""
+    clean_payload = dict(payload)
+    inci = split_ewg_ingredients(clean_payload.get("ingredients_from_packaging") or "")
+    if not inci:
+        return clean_payload
+    inci_norm = [normalize_text(name) for name in inci]
+    inci_tokens = [set(name.split()) for name in inci_norm]
+
+    def _matching_inci(name: str | None) -> str | None:
+        target = normalize_text(name)
+        if not target:
+            return None
+        target_tokens = set(target.split())
+        for raw, norm, tokens in zip(inci, inci_norm, inci_tokens):
+            if not norm:
+                continue
+            if target == norm or target in norm or norm in target:
+                return raw
+            if target_tokens and tokens:
+                overlap = len(target_tokens & tokens) / len(target_tokens | tokens)
+                if overlap >= 0.5:
+                    return raw
+        return None
+
+    structured = clean_payload.get("ingredients") or []
+    validated = []
+    for row in structured:
+        if not isinstance(row, dict):
+            continue
+        inci_name = _matching_inci(_ingredient_name(row))
+        if inci_name:
+            validated.append(row | {"name": inci_name})
+    min_validated = len(inci) if len(inci) < 3 else max(3, len(inci) // 2)
+    if len(validated) >= min_validated:
+        clean_payload["ingredients"] = validated
+    else:
+        clean_payload["ingredients"] = [{"name": name, "rank": index} for index, name in enumerate(inci, 1)]
+    return clean_payload
 
 
 @dataclass(frozen=True)
@@ -90,68 +128,6 @@ def _jsonish(value: Any) -> Any:
         return json.loads(clean)
     except json.JSONDecodeError:
         return value
-
-
-def _read_json(path: Path) -> Iterable[dict[str, Any]]:
-    opener = gzip.open if path.suffix == ".gz" else open
-    with opener(path, "rt", encoding="utf-8") as handle:  # type: ignore[arg-type]
-        payload = json.load(handle)
-    if isinstance(payload, list):
-        for row in payload:
-            if isinstance(row, dict):
-                yield row
-    elif isinstance(payload, dict):
-        rows = payload.get("products") or payload.get("ingredients") or payload.get("items") or payload.get("data")
-        if isinstance(rows, list):
-            for row in rows:
-                if isinstance(row, dict):
-                    yield row
-        else:
-            yield payload
-
-
-def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
-    opener = gzip.open if path.suffix == ".gz" else open
-    with opener(path, "rt", encoding="utf-8") as handle:  # type: ignore[arg-type]
-        for line in handle:
-            if line.strip():
-                row = json.loads(line)
-                if isinstance(row, dict):
-                    yield row
-
-
-def _read_csv(path: Path) -> Iterable[dict[str, Any]]:
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            yield {key: _jsonish(value) for key, value in row.items() if key}
-
-
-def _read_parquet(path: Path) -> Iterable[dict[str, Any]]:
-    try:
-        import pyarrow.parquet as pq
-    except ImportError as exc:
-        raise RuntimeError("Install backend[data] to import Parquet exports") from exc
-    table = pq.read_table(path)
-    for row in table.to_pylist():
-        yield row
-
-
-def _iter_rows(source_path: str) -> Iterable[dict[str, Any]]:
-    path = Path(source_path)
-    if not path.exists():
-        raise FileNotFoundError(path)
-    suffixes = set(path.suffixes)
-    if ".parquet" in suffixes:
-        yield from _read_parquet(path)
-    elif ".csv" in suffixes:
-        yield from _read_csv(path)
-    elif ".jsonl" in suffixes or path.name.endswith(".jsonl.gz"):
-        yield from _read_jsonl(path)
-    elif ".json" in suffixes or path.name.endswith(".json.gz"):
-        yield from _read_json(path)
-    else:
-        raise ValueError(f"Unsupported EWG import file type: {path}")
 
 
 def _first(payload: dict[str, Any], fields: Iterable[str]) -> Any:
@@ -232,8 +208,8 @@ def _upsert_brand(db: Session, name: str, source_record_code: str) -> Brand | No
 
 
 def _upsert_category(db: Session, raw: str) -> Category:
-    name = raw.replace("en:", "").replace("-", " ").strip().title()
-    slug = slugify(raw)
+    slug = canonical_category_slug(raw)
+    name = slug.replace("-", " ").strip().title()
     category = db.scalar(select(Category).where(Category.slug == slug))
     if category is None:
         category = Category(category_code=make_code("cat", slug), name=name, slug=slug)
@@ -309,6 +285,10 @@ def _ingredient_fingerprint(values: list[str]) -> set[str]:
     return {normalize_text(value) for value in values if normalize_text(value)}
 
 
+def _category_fingerprint(values: list[str]) -> set[str]:
+    return {canonical_category_slug(value) for value in values if canonical_category_slug(value)}
+
+
 def _product_ingredient_names(product: Product) -> list[str]:
     return [link.ingredient.normalized_name for link in product.ingredients if link.ingredient]
 
@@ -341,7 +321,7 @@ def _find_matching_product(
     if not candidates:
         return ProductMatch(product=None, method="new_ewg_product", confidence=0)
 
-    category_fingerprint = _ingredient_fingerprint(categories)
+    category_fingerprint = _category_fingerprint(categories)
     ingredient_fingerprint = _ingredient_fingerprint(ingredient_names)
     best_product: Product | None = None
     best_score = 0.0
@@ -349,7 +329,9 @@ def _find_matching_product(
         name_score = fuzz.token_set_ratio(name, candidate.name) / 100
         if name_score < 0.78:
             continue
-        candidate_categories = _ingredient_fingerprint([candidate.category_text or ""])
+        candidate_categories = _category_fingerprint(
+            [part.strip() for part in (candidate.category_text or "").split(",") if part.strip()]
+        )
         category_score = _jaccard(category_fingerprint, candidate_categories) if category_fingerprint else 0.5
         candidate_ingredients = set(_product_ingredient_names(candidate))
         ingredient_score = _jaccard(ingredient_fingerprint, candidate_ingredients) if ingredient_fingerprint else 0.4
@@ -692,6 +674,7 @@ def import_ewg_product_payload(
     review_threshold: float = 0.82,
     dry_run: bool = False,
 ) -> Product | None:
+    payload = normalize_ewg_product_payload_for_fusion(payload)
     ensure_ewg_source(db)
     name = _first_text(payload, PRODUCT_NAME_FIELDS)
     if not name:
@@ -913,39 +896,6 @@ def import_ewg_ingredient_payload(db: Session, payload: dict[str, Any], *, dry_r
         )
     _persist_ingredient_facts(db, ingredient, record, payload)
     return ingredient
-
-
-def _looks_like_ingredient_payload(payload: dict[str, Any]) -> bool:
-    if any(field in payload for field in PRODUCT_NAME_FIELDS):
-        return False
-    return any(field in payload for field in ("ingredient_name", "canonical_name", "inci_name"))
-
-
-def import_ewg_skin_deep(
-    db: Session,
-    source_path: str,
-    *,
-    limit: int = 1000,
-    review_threshold: float = 0.82,
-    dry_run: bool = False,
-) -> dict[str, int]:
-    ensure_ewg_source(db)
-    counts = {"products": 0, "ingredients": 0, "skipped": 0}
-    for row in _iter_rows(source_path):
-        if counts["products"] + counts["ingredients"] >= limit:
-            break
-        if _looks_like_ingredient_payload(row):
-            imported_ingredient = import_ewg_ingredient_payload(db, row, dry_run=dry_run)
-            counts["ingredients" if imported_ingredient is not None else "skipped"] += 1
-            continue
-        imported_product = import_ewg_product_payload(
-            db,
-            row,
-            review_threshold=review_threshold,
-            dry_run=dry_run,
-        )
-        counts["products" if imported_product is not None else "skipped"] += 1
-    return counts
 
 
 def ingredient_concern_terms(db: Session, ingredient_code: str) -> list[str]:

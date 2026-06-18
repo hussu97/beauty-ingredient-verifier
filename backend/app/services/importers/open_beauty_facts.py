@@ -26,11 +26,15 @@ from app.services.codes import make_code
 from app.services.normalization import (
     canonical_ingredient_name,
     normalize_text,
-    slugify,
     split_ingredients,
 )
 from app.services.source_records import upsert_source, upsert_source_record
-from app.services.source_fusion import link_ingredient_source, link_product_source, link_product_term
+from app.services.source_fusion import (
+    canonical_category_slug,
+    link_ingredient_source,
+    link_product_source,
+    link_product_term,
+)
 
 OPEN_BEAUTY_FACTS_SOURCE_CODE = "src_open_beauty_facts"
 OPEN_BEAUTY_FACTS_IMAGE_BASE_URL = "https://images.openbeautyfacts.org/images/products"
@@ -352,8 +356,8 @@ def _upsert_brand(db: Session, name: str, source_record_code: str) -> Brand | No
 
 
 def _upsert_category(db: Session, raw: str) -> Category:
-    name = raw.replace("en:", "").replace("-", " ").strip().title()
-    slug = slugify(raw)
+    slug = canonical_category_slug(raw)
+    name = slug.replace("-", " ").strip().title()
     category = db.scalar(select(Category).where(Category.slug == slug))
     if category is None:
         category = Category(category_code=make_code("cat", slug), name=name, slug=slug)

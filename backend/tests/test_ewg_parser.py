@@ -2,9 +2,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import Ingredient, Product, ProductIngredient, RiskRule, SourceRecord
-from app.services.importers.ewg_public_scraper import (
+from app.services.importers.ewg_parser import (
     PageSnapshot,
-    _parse_proxy,
     category_links_from_snapshot,
     is_challenge_snapshot,
     parse_ingredient_snapshot,
@@ -74,6 +73,32 @@ def test_parse_product_snapshot_extracts_scores_ingredients_and_packaging():
         "level": "moderate",
     }
     assert payload["ingredients"][1]["ingredient_url"].endswith("700000-CAPRYLOHYDROXAMIC_ACID/")
+
+
+def test_parse_product_snapshot_extracts_archived_gtin_when_present():
+    snapshot = PageSnapshot(
+        url="https://www.ewg.org/skindeep/products/9202226-Test_Product/",
+        title="EWG Skin Deep® | Example Brand Daily Cream Rating",
+        h1="Example Brand Daily Cream",
+        text="""
+        BRAND
+        Example Brand
+        UPC
+        0018787788059
+        CATEGORY
+        Bar Soap
+        Ingredients from packaging:
+        WATER, GLYCERIN
+        """,
+        links=[],
+        images=[{"src": "https://example.com/product.jpg", "alt": "Product score: 02"}],
+        headings=["Example Brand Daily Cream"],
+        metadata={"gtin13": "0018787788059"},
+    )
+
+    payload = parse_product_snapshot(snapshot)
+
+    assert payload["barcode"] == "0018787788059"
 
 
 def test_parse_ingredient_snapshot_extracts_concern_references():
@@ -176,7 +201,7 @@ def test_wayback_snapshot_and_junk_filters():
 
 
 def test_select_product_image_skips_icons_placeholders_and_lazy_srcs():
-    from app.services.importers.ewg_public_scraper import _select_product_image_url
+    from app.services.importers.ewg_parser import _select_product_image_url
 
     images = [
         {"src": "https://static.ewg.org/skindeep/img/icon-search.svg", "alt": ""},
@@ -197,7 +222,7 @@ def test_select_product_image_skips_icons_placeholders_and_lazy_srcs():
 
 
 def test_fusion_normalize_drops_junk_keeps_inci_aligned_scores():
-    from app.services.importers.ewg_wayback import _fusion_normalize_product
+    from app.services.importers.ewg_skin_deep import normalize_ewg_product_payload_for_fusion
 
     payload = {
         "ingredients_from_packaging": "WATER, GLYCERIN, CETEARYL ALCOHOL, PHENOXYETHANOL",
@@ -207,23 +232,23 @@ def test_fusion_normalize_drops_junk_keeps_inci_aligned_scores():
             {"name": "GLYCERIN", "hazard_score": 2},
             {"name": "HOW WE DETERMINE SCORES"},
             {"name": "CETEARYL ALCOHOL", "hazard_score": 1},
-            {"name": "PHENOXYETHANOL", "hazard_score": 4},
+            {"name": "PHENOXYETHANOL LEARN MORE", "hazard_score": 4},
         ],
     }
-    result = _fusion_normalize_product(payload)
+    result = normalize_ewg_product_payload_for_fusion(payload)
     names = [row["name"] for row in result["ingredients"]]
     assert names == ["WATER", "GLYCERIN", "CETEARYL ALCOHOL", "PHENOXYETHANOL"]
     assert all("hazard_score" in row for row in result["ingredients"])  # EWG scores kept
 
 
 def test_fusion_normalize_falls_back_to_inci_when_structured_is_junk():
-    from app.services.importers.ewg_wayback import _fusion_normalize_product
+    from app.services.importers.ewg_skin_deep import normalize_ewg_product_payload_for_fusion
 
     payload = {
         "ingredients_from_packaging": "WATER, GLYCERIN, NIACINAMIDE, PANTHENOL",
         "ingredients": [{"name": "DONATE"}, {"name": "LEARN MORE ABOUT EWG VERIFIED"}],
     }
-    result = _fusion_normalize_product(payload)
+    result = normalize_ewg_product_payload_for_fusion(payload)
     assert [r["name"] for r in result["ingredients"]] == [
         "WATER",
         "GLYCERIN",
@@ -232,22 +257,11 @@ def test_fusion_normalize_falls_back_to_inci_when_structured_is_junk():
     ]
 
 
-def test_parse_proxy_variants():
-    assert _parse_proxy(None) is None
-    assert _parse_proxy("http://u:p@1.2.3.4:8080") == {
-        "server": "http://1.2.3.4:8080",
-        "username": "u",
-        "password": "p",
-    }
-    assert _parse_proxy("socks5://host:1080") == {"server": "socks5://host:1080"}
+def test_snapshot_to_db_pipeline_end_to_end(db_session: Session):
+    """Snapshot -> parse -> import -> DB, the path Wayback feeds.
 
-
-def test_scrape_to_db_pipeline_end_to_end(db_session: Session):
-    """Snapshot -> parse -> import -> DB, the path every scraper engine feeds.
-
-    Exercises the data flow without a live fetch (which is gated by the target's
-    Cloudflare challenge), proving products, ingredients, links and EWG-derived
-    risk rules land in the database.
+    Exercises the data flow without a live archive fetch, proving products,
+    ingredients, links and EWG-derived risk rules land in the database.
     """
     snapshot = PageSnapshot(
         url="https://www.ewg.org/skindeep/products/9202226-Test_Product/",

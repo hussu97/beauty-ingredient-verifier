@@ -39,9 +39,35 @@ def split_ewg_ingredients(ingredient_text: str | None) -> list[str]:
     if not ingredient_text:
         return []
     text = ingredient_text.replace("\n", ",")
+    stop_patterns = (
+        r"\bDirections from packaging\b",
+        r"\bWarnings from packaging\b",
+        r"\bProduct's animal testing policies\b",
+        r"\bUnderstanding scores\b",
+        r"\bLegal Disclaimer\b",
+        r"\bAbout EWG Verified\b",
+        r"\bDownload EWG\b",
+    )
+    stop_indexes = [
+        match.start()
+        for pattern in stop_patterns
+        if (match := re.search(pattern, text, flags=re.IGNORECASE))
+    ]
+    if stop_indexes:
+        text = text[: min(stop_indexes)]
     text = re.sub(r"\s+[;/]\s+", ", ", text)
-    parts = [part.strip(" .;:") for part in text.split(",")]
-    return [part for part in parts if len(part) > 1]
+    parts = []
+    junk_re = re.compile(
+        r"(learn more|legal disclaimer|download ewg|healthy living app|"
+        r"ratings? below indicate|choking hazard|\bdonate\b)",
+        re.IGNORECASE,
+    )
+    for part in text.split(","):
+        clean = re.sub(r"\*+", " ", part).strip(" .;:_")
+        clean = re.sub(r"\b(?:to\s+)?learn more\b.*$", "", clean, flags=re.IGNORECASE).strip(" .;:_")
+        if len(clean) > 1 and not junk_re.search(clean):
+            parts.append(clean)
+    return parts
 
 
 def normalize_profile_list(values: list[str] | None) -> set[str]:

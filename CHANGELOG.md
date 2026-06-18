@@ -3,9 +3,11 @@
 ## 2026-06-18
 
 ### Backend
+- Removed legacy direct EWG ingestion paths (`import-ewg-skin-deep` file/API-style import and `scrape-ewg-skin-deep` Playwright/Selenium browser collection); EWG ingestion now uses the Wayback importer.
+- Added EWG/OBF category canonicalization and centralized EWG ingredient-INCI cross-validation so source fusion keeps EWG hazard scores on real Open Beauty Facts-compatible ingredient names.
+- Added conservative UPC/EAN/GTIN extraction from archived EWG page metadata or visible labels when present, while preserving barcode-less brand/name/category/ingredient/image matching as the normal EWG path.
 - Added source-fusion tables for product/ingredient source links, canonical terms, term aliases, and source-backed product/ingredient term links.
-- Added active `import-ewg-skin-deep` support for authorized EWG Skin Deep JSON, JSONL, CSV, and Parquet exports with barcode-first product deduplication, brand/name/category/ingredient fuzzy reconciliation, raw source-record storage, canonical term mapping, and conservative EWG concern-rule generation.
-- Added `scrape-ewg-skin-deep`, a Playwright/Chromium local browser scraper for EWG browse/product/ingredient pages with persistent browser profile support, all-category discovery, bounded parallel browser workers, rate limits, challenge detection, optional raw JSONL output, and ingredient-page expansion.
+- Added active `import-ewg-wayback` support for EWG Skin Deep archived product and ingredient pages with resumable archive.org collection, product image extraction, brand/name/category/ingredient fuzzy reconciliation, raw source-record storage, canonical term mapping, and conservative EWG concern-rule generation.
 - Added queryable `source_record_facts` storage for scraped or imported source fields that are useful but not first-class catalog columns yet.
 - Extended product detail, source, and import APIs with source links, normalized attributes, source conflicts, source term summaries, and source-fusion counts.
 - Switched text normalization to preserve non-ASCII names while still stripping diacritics, preventing Cyrillic and other non-Latin product names from collapsing to empty normalized values.
@@ -25,7 +27,7 @@
 - Started the local full pending-image embedding run in a detached `screen` session named `bpv-image-index`.
 
 ### Docs
-- Documented EWG Skin Deep file and browser import operations, source-fusion provenance, Playwright setup, environment variables, and admin audit surfaces.
+- Documented EWG Skin Deep Wayback import operations, source-fusion provenance, environment variables, and admin audit surfaces.
 - Documented source-backed product corrections, resumable image indexing operations, and clarified that source-confidence heuristics are not shown in the scanner UI.
 
 ### Frontend
