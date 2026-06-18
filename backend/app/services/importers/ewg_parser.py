@@ -142,7 +142,7 @@ def _barcode_from_snapshot(snapshot: PageSnapshot, lines: list[str]) -> str | No
 # UI chrome, hazard-level labels and scoring-methodology phrases that render in
 # uppercase on EWG pages and otherwise get mistaken for ingredient names.
 _INGREDIENT_NAME_JUNK_RE = re.compile(
-    r"^(DONATE|LEARN MORE|READ MORE|EWG VERIFIED|SEE |VIEW |SHOW |HIDE |HOW WE |WHAT IS |"
+    r"^(DONATE|GET UPDATES|LEARN MORE|READ MORE|EWG VERIFIED|SEE |VIEW |SHOW |HIDE |HOW WE |WHAT IS |"
     r"(HIGH|MODERATE|LOW|NO|UNKNOWN|MODERATE-HIGH) HAZARD|"
     r"(PRODUCT|INGREDIENT) SCORE|DETERMINE SCORE|"
     r"WEIGHT[- ]OF[- ]EVIDENCE|UNDERSTANDING SCORES?|DATA (AVAILABILITY|GAP))",

@@ -48,6 +48,8 @@ CDX_API = "http://web.archive.org/cdx/search/cdx"
 WAYBACK_RAW = "https://web.archive.org/web/{timestamp}id_/{url}"
 # A far-future timestamp makes Wayback redirect to the most recent capture.
 LATEST_TIMESTAMP = "29991231235959"
+FETCH_ATTEMPTS = 3
+TRANSIENT_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 
 # Rewrites a Wayback URL prefix back to the original target URL. Handles both the
 # absolute (https://web.archive.org/web/...) and relative (/web/...) forms, plus
@@ -98,6 +100,7 @@ def iter_cdx_originals(
     """
     resume_key: str | None = None
     seen: set[str] = set()
+    transient_failures = 0
     while True:
         params: dict[str, Any] = {
             "url": url_pattern,
@@ -112,8 +115,20 @@ def iter_cdx_originals(
             params["from"] = from_date
         if resume_key:
             params["resumeKey"] = resume_key
-        response = client.get(CDX_API, params=params, timeout=180.0)
-        response.raise_for_status()
+        try:
+            response = client.get(CDX_API, params=params, timeout=180.0)
+            if response.status_code in TRANSIENT_STATUS_CODES:
+                raise httpx.HTTPStatusError(
+                    f"Transient CDX status {response.status_code}",
+                    request=response.request,
+                    response=response,
+                )
+            response.raise_for_status()
+            transient_failures = 0
+        except httpx.HTTPError:
+            transient_failures += 1
+            time.sleep(min(60.0, 2.0 * transient_failures))
+            continue
         rows = response.json() or []
         if rows and rows[0] == ["original", "timestamp"]:
             rows = rows[1:]
@@ -217,11 +232,20 @@ def fetch_snapshot_with_reason(
 ) -> tuple[PageSnapshot | None, str | None]:
     """Fetch an archived capture and return a machine-readable failure bucket."""
     raw_url = WAYBACK_RAW.format(timestamp=timestamp, url=original)
-    try:
-        response = client.get(raw_url, timeout=60.0, follow_redirects=True)
-    except httpx.HTTPError:
-        return None, "fetch_http_errors"
-    if response.status_code != 200:
+    response: httpx.Response | None = None
+    for attempt in range(FETCH_ATTEMPTS):
+        try:
+            response = client.get(raw_url, timeout=90.0, follow_redirects=True)
+        except httpx.HTTPError:
+            if attempt + 1 >= FETCH_ATTEMPTS:
+                return None, "fetch_http_errors"
+            time.sleep(0.5 * (attempt + 1))
+            continue
+        if response.status_code in TRANSIENT_STATUS_CODES and attempt + 1 < FETCH_ATTEMPTS:
+            time.sleep(0.5 * (attempt + 1))
+            continue
+        break
+    if response is None or response.status_code != 200:
         return None, "fetch_bad_status"
     if not response.text:
         return None, "fetch_empty"

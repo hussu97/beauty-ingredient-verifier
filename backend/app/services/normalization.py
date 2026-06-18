@@ -58,7 +58,7 @@ def split_ewg_ingredients(ingredient_text: str | None) -> list[str]:
     text = re.sub(r"\s+[;/]\s+", ", ", text)
     parts = []
     junk_re = re.compile(
-        r"(learn more|legal disclaimer|download ewg|healthy living app|"
+        r"(learn more|legal disclaimer|download ewg|healthy living app|get updates|"
         r"ratings? below indicate|choking hazard|\bdonate\b)",
         re.IGNORECASE,
     )

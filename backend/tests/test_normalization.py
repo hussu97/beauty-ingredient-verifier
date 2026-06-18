@@ -9,7 +9,7 @@ def test_normalize_text_and_ingredient_split():
 
 def test_split_ewg_ingredients_trims_page_chrome():
     text = (
-        "Aqua/Water/Eau, DONATE, Glycerin, Glyceryl Arachidonate, Sodium Palmitoyl Proline Learn More, "
+        "Aqua/Water/Eau, DONATE, GET UPDATES, Glycerin, Glyceryl Arachidonate, Sodium Palmitoyl Proline Learn More, "
         "Sodium Benzoate Directions from packaging Pump a small amount onto hands. "
         "Legal Disclaimer About EWG Verified"
     )

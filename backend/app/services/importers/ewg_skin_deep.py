@@ -714,8 +714,11 @@ def import_ewg_product_payload(
     )
     product = match.product
     if product is None:
+        product_code = make_code("prd", f"ewg:{external_id}")
+        product = db.get(Product, product_code)
+    if product is None:
         product = Product(
-            product_code=make_code("prd", f"ewg:{external_id}"),
+            product_code=product_code,
             barcode=barcode,
             name=name,
             normalized_name=normalize_text(name),
@@ -730,6 +733,12 @@ def import_ewg_product_payload(
         db.add(product)
         match = ProductMatch(product=product, method="new_ewg_product", confidence=max(match.confidence, 0.88))
     else:
+        if match.product is None:
+            match = ProductMatch(
+                product=product,
+                method="ewg_product_code_existing",
+                confidence=max(match.confidence, 0.88),
+            )
         product.source_record_code = product.source_record_code or record.source_record_code
         product.last_source_update_at = max(
             [date for date in [product.last_source_update_at, source_updated_at] if date],
