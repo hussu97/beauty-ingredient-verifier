@@ -7,7 +7,7 @@
 - Production database: PostgreSQL 16 with pgvector on the same VM.
 - Local catalog pipeline: scraper and image-indexer containers run locally against local SQLite, then explicitly sync catalog/source/embedding tables to production Postgres.
 
-Start with an `e2-standard-4` VM or equivalent (**4 vCPU / 16 GB RAM**) and a separate persistent balanced/SSD disk mounted for Postgres data at `/opt/bpv/postgres-data`. Start at **256 GB** and resize the disk before Postgres reaches sustained storage pressure.
+Start with an `e2-standard-4` VM or equivalent (**4 vCPU / 16 GB RAM**) and a separate persistent balanced/SSD disk mounted at `/opt/bpv/postgres-data`. Use `/opt/bpv/postgres-data/pgdata` as the Postgres data directory so Postgres does not initialize directly in the mount root. Start at **256 GB** and resize the disk before Postgres reaches sustained storage pressure.
 
 Production does not require GCS in v1. Product images are stored as source URLs in `product_images.url`; local indexing may cache files under `backend/storage/product-images`, but production relies on synced `image_embeddings.vector` plus the Postgres pgvector side index.
 
@@ -68,7 +68,7 @@ Required GitHub Secrets:
 | `BPV_POSTGRES_DB` | Postgres database name. |
 | `BPV_POSTGRES_USER` | Postgres user. |
 | `BPV_POSTGRES_PASSWORD` | Postgres password. |
-| `BPV_POSTGRES_DATA_DIR` | Optional host data path; defaults to `/opt/bpv/postgres-data`. |
+| `BPV_POSTGRES_DATA_DIR` | Optional host data path; defaults to `/opt/bpv/postgres-data/pgdata`. |
 | `BPV_CORS_ORIGINS` | Comma-separated Vercel origins. |
 | `BPV_OPEN_BEAUTY_FACTS_USER_AGENT` | Polite Open Beauty Facts contact UA. |
 | `BPV_EWG_USER_AGENT` | Polite EWG/archive import contact UA. |
@@ -187,7 +187,7 @@ cat bpv-prod.sql | docker compose --env-file /opt/bpv/.env -f /opt/bpv/docker-co
 | `BPV_POSTGRES_DB` | Compose | Yes in prod | `beauty_product_verifier` | Postgres database name. |
 | `BPV_POSTGRES_USER` | Compose | Yes in prod | `bpv` | Postgres user. |
 | `BPV_POSTGRES_PASSWORD` | Compose | Yes in prod | none | Postgres password. |
-| `BPV_POSTGRES_DATA_DIR` | Compose | No | `/opt/bpv/postgres-data` | Host path for Postgres data. |
+| `BPV_POSTGRES_DATA_DIR` | Compose | No | `/opt/bpv/postgres-data/pgdata` | Host path for Postgres data. Use a subdirectory under the mounted disk, not the mount root. |
 | `API_DOMAIN` | Caddy | Yes in prod | none | Public API domain. |
 | `ACME_EMAIL` | Caddy | Yes in prod | none | ACME/TLS contact email. |
 | `VITE_API_BASE_URL` | Frontend | Yes | `http://127.0.0.1:8000/api/v1` | Backend API base URL. |

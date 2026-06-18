@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: ${BPV_POSTGRES_USER}
       POSTGRES_PASSWORD: ${BPV_POSTGRES_PASSWORD}
     volumes:
-      - ${BPV_POSTGRES_DATA_DIR:-/opt/bpv/postgres-data}:/var/lib/postgresql/data
+      - ${BPV_POSTGRES_DATA_DIR:-/opt/bpv/postgres-data/pgdata}:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${BPV_POSTGRES_USER} -d ${BPV_POSTGRES_DB}"]
       interval: 10s
