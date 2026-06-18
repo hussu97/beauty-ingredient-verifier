@@ -7,6 +7,7 @@
 - Changed the production API Docker build to preinstall CPU-only Torch and use GitHub Actions Docker cache, avoiding CUDA/NVIDIA image bloat on the single-VM boot disk.
 - Fixed the backend deploy workflow to initialize Docker Buildx before using the GitHub Actions cache backend.
 - Fixed the backend deploy migration step so the one-off Alembic container cannot consume the remaining SSH script before `docker compose up -d` and health checks run.
+- Hardened the backend deploy health loop to validate the HTTP status and ready body while tolerating transient startup connection resets.
 - Added `sync-local-to-prod` with dry-run/apply/validate-only modes, explicit dependency-ordered catalog/source/embedding table sync, runtime-table exclusions, sync run tracking, and pgvector refresh after embedding sync.
 - Added `sync_runs` plus a PostgreSQL `image_embedding_vectors` pgvector side index for production CLIP image matching from synced JSON embeddings.
 - Added audit-remediation integrity hardening: SQLite foreign keys are enabled for runtime/test engines, metadata now mirrors migration uniqueness boundaries, and production startup rejects local-only auto-create/demo-bootstrap flags.
