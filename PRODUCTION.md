@@ -13,14 +13,14 @@ Production does not require GCS in v1. Product images are stored as source URLs 
 
 ## Vercel Frontend
 
-Create the Vercel project from `frontend/`.
+Create the Vercel project `beauty-ingredient-verifier` from `frontend/`.
 
 - Build command: `npm run build`
 - Output directory: `dist`
 - Framework: Vite
 - Env: `VITE_API_BASE_URL=https://<api-domain>/api/v1`
 
-`frontend/vercel.json` rewrites SPA routes to `index.html`. Keep frontend secrets in Vercel only; do not copy backend database or deploy secrets into Vercel.
+`frontend/vercel.json` rewrites SPA routes to `index.html`. Keep frontend secrets in Vercel only; do not copy backend database or deploy secrets into Vercel. The frontend includes `frontend/src/data/profile-options.json`, a vendored copy of `shared/profile-options.json`, because Vercel builds are rooted at `frontend/`.
 
 ## GCP VM Bootstrap
 

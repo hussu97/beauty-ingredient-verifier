@@ -7,7 +7,7 @@ A local-first MVP for building an automated beauty product and ingredient databa
 - `backend/` - FastAPI API, SQLite/PostgreSQL data layer, import/enrichment/scan services, CLI commands.
 - `frontend/` - React + Vite scanner-first workspace with product directory and admin database/source tabs.
 - `.github/workflows/backend-deploy.yml` - backend CI/deploy pipeline that tests, Buildx-builds the API image, pushes GHCR, runs migrations noninteractively, restarts the GCP VM stack, and waits through startup resets for an API health 200.
-- `shared/profile-options.json` - source-backed clinical profile vocabulary used by both frontend controls and backend rule matching.
+- `shared/profile-options.json` - source-backed clinical profile vocabulary used by backend rule matching; the frontend vendors the same vocabulary under `frontend/src/data/` for Vercel builds.
 - `docs/` - implementation notes and future research.
 - `scripts/` - convenience scripts for local development.
 - `ARCHITECTURE.md` - system model, data flow, and source strategy.
@@ -36,7 +36,7 @@ npm run dev -- --host 127.0.0.1
 
 Open `http://127.0.0.1:5173`. The scanner is the first screen; brand/category product browsing is available under `http://127.0.0.1:5173/directory`; database, source, and import tools are available under `http://127.0.0.1:5173/admin`. In local mode, the backend can auto-create the SQLite schema and demo source-backed records. Outside local mode, run Alembic migrations and disable demo bootstrap.
 
-Profile inputs are controlled custom dropdowns sourced from `shared/profile-options.json`. Free-text profile values from older local storage are canonicalized through aliases when possible and unsupported values are dropped rather than sent to risk rules.
+Profile inputs are controlled custom dropdowns sourced from the vendored frontend copy of `shared/profile-options.json`. Free-text profile values from older local storage are canonicalized through aliases when possible and unsupported values are dropped rather than sent to risk rules.
 
 The homepage keeps the consumer flow compact: profile dropdowns, image upload, an interactive scale-style harm meter, and the matched product result. `POST /scans` now enqueues a pending scan and returns immediately; the frontend shows exact browser upload progress, then polls `GET /scans/{scan_code}` while barcode/OCR/CLIP matching runs in a backend background task. Directory browsing is searchable, paginated, and uses adaptive layouts for desktop and mobile.
 

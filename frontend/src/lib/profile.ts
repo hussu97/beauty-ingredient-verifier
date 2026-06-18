@@ -1,4 +1,4 @@
-import profileOptionsJson from "../../../shared/profile-options.json";
+import profileOptionsJson from "../data/profile-options.json";
 import type { ClinicalProfile } from "../api/types";
 
 type ProfileOption = {

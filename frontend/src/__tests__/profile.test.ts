@@ -55,4 +55,10 @@ describe("profile utilities", () => {
       "conditions",
     ]);
   });
+
+  it("includes the profile vocabulary needed by Vercel frontend builds", () => {
+    expect(profileOptions.version).toBe("2026-06-18.1");
+    expect(profileOptions.fields.sensitivities.options.map((option) => option.value)).toContain("fragrance");
+    expect(profileOptions.booleans.pregnancy.aliases).toContain("pregnant");
+  });
 });

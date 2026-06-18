@@ -49,6 +49,7 @@
 - Documented source-backed product corrections, resumable image indexing operations, and clarified that source-confidence heuristics are not shown in the scanner UI.
 
 ### Frontend
+- Vendored shared clinical profile options into `frontend/src/data/` so Vercel builds rooted at `frontend/` compile without importing files outside the project root.
 - Added API request timeouts, friendly FastAPI error parsing, scan polling for pending jobs, and XHR upload timeout/network handling.
 - Debounced admin and directory searches, stopped directory search from auto-ranking arbitrary first results, and surfaced product/risk query errors on scanner and PDP views.
 - Added product source chips, normalized attribute chips, and source-conflict rows to product source notes.

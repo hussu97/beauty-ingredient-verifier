@@ -1,0 +1,206 @@
+{
+  "version": "2026-06-18.1",
+  "fields": {
+    "skin_types": {
+      "label": "Skin",
+      "mode": "multi",
+      "options": [
+        {
+          "value": "sensitive",
+          "label": "Sensitive",
+          "aliases": ["reactive"]
+        },
+        {
+          "value": "dry",
+          "label": "Dry",
+          "aliases": ["dehydrated"]
+        }
+      ]
+    },
+    "scalp_types": {
+      "label": "Scalp",
+      "mode": "multi",
+      "options": [
+        {
+          "value": "sensitive",
+          "label": "Sensitive scalp",
+          "aliases": ["reactive scalp"]
+        }
+      ]
+    },
+    "age_band": {
+      "label": "Age",
+      "mode": "single",
+      "options": [
+        {
+          "value": "infant",
+          "label": "Infant / baby",
+          "aliases": ["baby"]
+        },
+        {
+          "value": "child",
+          "label": "Child / toddler",
+          "aliases": ["children", "kid", "toddler"]
+        }
+      ]
+    },
+    "sensitivities": {
+      "label": "Sensitivities",
+      "mode": "multi",
+      "options": [
+        {
+          "value": "fragrance",
+          "label": "Fragrance / perfume",
+          "aliases": ["perfume", "parfum"]
+        },
+        {
+          "value": "essential oils",
+          "label": "Essential oils",
+          "aliases": ["essential oil"]
+        },
+        {
+          "value": "preservatives",
+          "label": "Preservatives",
+          "aliases": ["preservative"]
+        },
+        {
+          "value": "formaldehyde",
+          "label": "Formaldehyde releasers",
+          "aliases": ["formalin", "formaldehyde releaser"]
+        },
+        {
+          "value": "isothiazolinone",
+          "label": "Isothiazolinone preservatives",
+          "aliases": ["methylisothiazolinone", "methylchloroisothiazolinone", "mi", "mit", "cmit"]
+        },
+        {
+          "value": "hair dye",
+          "label": "Hair dye / PPD",
+          "aliases": ["ppd", "p phenylenediamine", "paraphenylenediamine"]
+        },
+        {
+          "value": "acids",
+          "label": "Exfoliating acids / AHA",
+          "aliases": ["aha", "glycolic acid", "lactic acid"]
+        },
+        {
+          "value": "retinoids",
+          "label": "Retinoids / retinol",
+          "aliases": ["retinol", "retinal", "retinaldehyde"]
+        },
+        {
+          "value": "metal",
+          "label": "Metals",
+          "aliases": ["nickel", "gold"]
+        }
+      ]
+    },
+    "allergies": {
+      "label": "Known allergies",
+      "mode": "multi",
+      "options": [
+        {
+          "value": "fragrance",
+          "label": "Fragrance / perfume",
+          "aliases": ["perfume", "parfum"]
+        },
+        {
+          "value": "limonene",
+          "label": "Limonene",
+          "aliases": ["d limonene"]
+        },
+        {
+          "value": "linalool",
+          "label": "Linalool",
+          "aliases": []
+        },
+        {
+          "value": "eugenol",
+          "label": "Eugenol",
+          "aliases": []
+        },
+        {
+          "value": "citral",
+          "label": "Citral",
+          "aliases": []
+        },
+        {
+          "value": "latex",
+          "label": "Latex / natural rubber",
+          "aliases": ["natural rubber"]
+        },
+        {
+          "value": "metal",
+          "label": "Metal",
+          "aliases": ["nickel", "gold"]
+        },
+        {
+          "value": "formaldehyde",
+          "label": "Formaldehyde",
+          "aliases": ["formalin"]
+        },
+        {
+          "value": "bronopol",
+          "label": "Bronopol",
+          "aliases": ["2 bromo 2 nitropropane 1 3 diol"]
+        },
+        {
+          "value": "dmdm hydantoin",
+          "label": "DMDM hydantoin",
+          "aliases": []
+        },
+        {
+          "value": "quaternium 15",
+          "label": "Quaternium-15",
+          "aliases": ["quaternium-15"]
+        },
+        {
+          "value": "methylisothiazolinone",
+          "label": "Methylisothiazolinone / MI",
+          "aliases": ["mi", "mit"]
+        },
+        {
+          "value": "methylchloroisothiazolinone",
+          "label": "Methylchloroisothiazolinone / CMIT",
+          "aliases": ["cmit"]
+        },
+        {
+          "value": "ppd",
+          "label": "PPD hair dye",
+          "aliases": ["p phenylenediamine", "paraphenylenediamine"]
+        }
+      ]
+    },
+    "conditions": {
+      "label": "Skin conditions",
+      "mode": "multi",
+      "options": [
+        {
+          "value": "eczema",
+          "label": "Eczema",
+          "aliases": ["atopic dermatitis"]
+        },
+        {
+          "value": "contact dermatitis",
+          "label": "Contact dermatitis",
+          "aliases": ["allergic contact dermatitis"]
+        },
+        {
+          "value": "rosacea",
+          "label": "Rosacea",
+          "aliases": []
+        }
+      ]
+    }
+  },
+  "booleans": {
+    "pregnancy": {
+      "label": "Pregnancy",
+      "aliases": ["pregnant"]
+    },
+    "lactation": {
+      "label": "Lactation",
+      "aliases": ["breastfeeding", "nursing"]
+    }
+  }
+}
