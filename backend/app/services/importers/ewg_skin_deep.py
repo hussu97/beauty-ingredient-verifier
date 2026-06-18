@@ -20,6 +20,7 @@ from app.db.models import (
     IngredientTermLink,
     Product,
     ProductCategory,
+    ProductImage,
     ProductIngredient,
     RiskRule,
 )
@@ -655,6 +656,35 @@ def _upsert_product_ingredient(
         link.source_record_code = link.source_record_code or source_record_code
 
 
+def _upsert_product_image(
+    db: Session,
+    *,
+    product: Product,
+    url: str,
+    source_record_code: str,
+) -> None:
+    """Create a front ProductImage row so the CLIP indexer can embed it."""
+    clean = (url or "").strip()
+    if not clean.lower().startswith("http"):
+        return
+    image_code = make_code("img", f"{product.product_code}:{clean}")
+    if db.get(ProductImage, image_code) is not None:
+        return
+    # Avoid duplicate front images for the same product from another source.
+    if any(link.url == clean for link in product.images):
+        return
+    db.add(
+        ProductImage(
+            image_code=image_code,
+            product_code=product.product_code,
+            kind="front",
+            url=clean,
+            source_record_code=source_record_code,
+            embedding_status="pending",
+        )
+    )
+
+
 def import_ewg_product_payload(
     db: Session,
     payload: dict[str, Any],
@@ -739,6 +769,12 @@ def import_ewg_product_payload(
     )
     _link_product_terms(db, product, record, payload)
     _persist_product_facts(db, product, record, payload)
+
+    image_url = payload.get("image_url")
+    if image_url:
+        _upsert_product_image(
+            db, product=product, url=str(image_url), source_record_code=record.source_record_code
+        )
 
     for raw_category in category_values:
         category = _upsert_category(db, raw_category)

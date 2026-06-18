@@ -23,7 +23,7 @@ from app.services.importers.open_beauty_facts import (
     import_open_beauty_facts,
 )
 from app.services.importers.ewg_skin_deep import import_ewg_skin_deep
-from app.services.importers.ewg_wayback import import_ewg_from_wayback
+from app.services.importers.ewg_wayback import backfill_wayback_images, import_ewg_from_wayback
 from app.services.importers.ewg_public_scraper import (
     DEFAULT_USER_AGENT,
     EwgScrapeBlocked,
@@ -318,6 +318,40 @@ def import_ewg_wayback_command(
     console.print_json(data=counts | {"dry_run": dry_run})
 
 
+@app.command("backfill-ewg-wayback-images")
+def backfill_ewg_wayback_images_command(
+    max_items: int = typer.Option(0, "--max-items", min=0, help="Cap items; 0 = all missing."),
+    fetch_workers: int = typer.Option(8, "--fetch-workers", min=1, max=32),
+    request_delay: float = typer.Option(0.2, "--request-delay", min=0.0),
+    progress_every: int = typer.Option(100, "--progress-every", min=0),
+) -> None:
+    """Add product images to EWG products imported before image support existed.
+
+    Re-fetches each archived page, extracts the product photo, and creates a
+    pending ProductImage row for CLIP indexing. Idempotent and resumable.
+    """
+    from datetime import datetime
+
+    def _progress(counts: dict[str, int]) -> None:
+        if progress_every and counts["checked"] % progress_every == 0:
+            stamp = datetime.now().strftime("%H:%M:%S")
+            console.print(
+                f"[{stamp}] checked={counts['checked']} images_added={counts['images_added']} "
+                f"no_image={counts['no_image']} fetch_failures={counts['fetch_failures']}"
+            )
+
+    with _session() as db:
+        counts = backfill_wayback_images(
+            db,
+            max_items=max_items,
+            fetch_workers=fetch_workers,
+            request_delay=request_delay,
+            progress=_progress,
+        )
+        db.commit()
+    console.print_json(data=counts)
+
+
 @app.command("enrich-ingredients")
 def enrich_ingredients_command(
     pubchem_live: bool = typer.Option(False, "--pubchem-live", help="Enable live PubChem lookups."),
@@ -453,6 +487,10 @@ def scrape_ewg_skin_deep_entry() -> None:
 
 def import_ewg_wayback_entry() -> None:
     _run_single_command("import-ewg-wayback")
+
+
+def backfill_ewg_wayback_images_entry() -> None:
+    _run_single_command("backfill-ewg-wayback-images")
 
 
 def index_images_entry() -> None:

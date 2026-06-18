@@ -27,7 +27,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import SourceRecord
+from app.db.models import Product, SourceRecord
 from app.services.importers.ewg_public_scraper import (
     INGREDIENT_PATH_RE,
     PRODUCT_PATH_RE,
@@ -39,6 +39,7 @@ from app.services.importers.ewg_public_scraper import (
 )
 from app.services.importers.ewg_skin_deep import (
     EWG_SOURCE_CODE,
+    _upsert_product_image,
     ensure_ewg_source,
     import_ewg_ingredient_payload,
     import_ewg_product_payload,
@@ -385,4 +386,99 @@ def import_ewg_from_wayback(
             is not None,
         )
 
+    return counts
+
+
+def backfill_wayback_images(
+    db: Session,
+    *,
+    max_items: int = 0,
+    fetch_workers: int = 8,
+    request_delay: float = 0.2,
+    commit_every: int = 100,
+    progress: Callable[[dict[str, int]], None] | None = None,
+) -> dict[str, int]:
+    """Add product images to already-imported EWG products that have none.
+
+    Re-fetches each product's latest archived page, extracts the real product
+    photo, and creates a front ProductImage row (pending CLIP embedding). Use
+    after an import that predates image support; safe to re-run (idempotent).
+    """
+    ensure_ewg_source(db)
+    counts = {"checked": 0, "images_added": 0, "no_image": 0, "fetch_failures": 0}
+    rows = db.execute(
+        select(Product.product_code, SourceRecord.source_url)
+        .join(SourceRecord, Product.source_record_code == SourceRecord.source_record_code)
+        .where(
+            SourceRecord.source_code == EWG_SOURCE_CODE,
+            SourceRecord.record_type == "product",
+            ~Product.images.any(),
+        )
+    ).all()
+    targets = [(code, url) for code, url in rows if url]
+    if max_items:
+        targets = targets[:max_items]
+
+    headers = {"User-Agent": "BeautyProductVerifier/0.1 (research; contact local-dev@example.com)"}
+    processed_since_commit = 0
+    with httpx.Client(headers=headers) as client:
+
+        def _fetch(item: tuple[str, str]) -> tuple[str, PageSnapshot | None]:
+            if request_delay:
+                time.sleep(request_delay)
+            return item[0], fetch_latest_snapshot(client, item[1])
+
+        source = iter(targets)
+        exhausted = False
+        inflight: dict[Any, tuple[str, str]] = {}
+        with ThreadPoolExecutor(max_workers=max(1, fetch_workers)) as pool:
+
+            def _submit() -> None:
+                nonlocal exhausted
+                try:
+                    item = next(source)
+                except StopIteration:
+                    exhausted = True
+                    return
+                inflight[pool.submit(_fetch, item)] = item
+
+            window = max(1, fetch_workers) * 3
+            while True:
+                while not exhausted and len(inflight) < window:
+                    _submit()
+                if not inflight:
+                    break
+                done, _ = wait(inflight, return_when=FIRST_COMPLETED)
+                for future in done:
+                    inflight.pop(future, None)
+                    counts["checked"] += 1
+                    try:
+                        product_code, snapshot = future.result()
+                    except Exception:
+                        counts["fetch_failures"] += 1
+                        continue
+                    if snapshot is None:
+                        counts["fetch_failures"] += 1
+                        continue
+                    image_url = parse_product_snapshot(snapshot).get("image_url")
+                    if not image_url:
+                        counts["no_image"] += 1
+                        continue
+                    product = db.get(Product, product_code)
+                    if product is None:
+                        continue
+                    _upsert_product_image(
+                        db,
+                        product=product,
+                        url=str(image_url),
+                        source_record_code=product.source_record_code or "",
+                    )
+                    counts["images_added"] += 1
+                    processed_since_commit += 1
+                    if processed_since_commit >= commit_every:
+                        db.commit()
+                        processed_since_commit = 0
+                    if progress is not None:
+                        progress(counts)
+        db.commit()
     return counts

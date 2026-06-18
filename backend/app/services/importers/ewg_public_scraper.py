@@ -277,6 +277,45 @@ def _ingredient_sections(lines: list[str], links: list[dict[str, str]], images: 
     return rows
 
 
+# Unwraps a Cloudflare image-resizing URL (.../cdn-cgi/image/<opts>/<real-url>).
+_CDN_CGI_RE = re.compile(r"/cdn-cgi/image/[^/]+/(https?://.+)$", re.IGNORECASE)
+# Non-product images to ignore (UI chrome, placeholders, social cards).
+_IMAGE_EXCLUDE = ("/icon", "missing_images", "social_share", "_logo", "sprite", "placeholder")
+# A complete image URL ending in a real extension. EWG eager-loads the main
+# product photo with a full extension, while lazy-loaded recommended products
+# carry a truncated ".../original." src — requiring an extension selects the
+# genuine product image and rejects the placeholders.
+_IMAGE_EXT_RE = re.compile(r"\.(png|jpe?g|webp|gif)(?:[?#].*)?$", re.IGNORECASE)
+
+
+def _select_product_image_url(images: list[dict[str, str]]) -> str | None:
+    """Pick the real product photo from a page's images.
+
+    EWG serves the product photo from its content CDN (``/image/contents/<id>/``),
+    often wrapped in a Cloudflare resizing URL. We unwrap that, skip score badges,
+    UI icons, social-share cards, the "missing image" placeholder, and truncated
+    lazy-load srcs, preferring a genuine product-content image. The returned URL
+    is downloadable directly for CLIP image indexing.
+    """
+    for image in images:
+        src = (image.get("src") or "").strip()
+        if not src:
+            continue
+        match = _CDN_CGI_RE.search(src)
+        if match:
+            src = match.group(1)
+        lowered = src.lower()
+        if "score" in normalize_text(image.get("alt", "")):
+            continue
+        if any(token in lowered for token in _IMAGE_EXCLUDE) or not _IMAGE_EXT_RE.search(lowered):
+            continue
+        # EWG product photos always live on the content CDN; anything else
+        # (promos, report banners, UI assets) is not the product image.
+        if "/image/contents/" in lowered:
+            return src
+    return None
+
+
 def parse_product_snapshot(snapshot: PageSnapshot) -> dict[str, Any]:
     lines = _lines(snapshot.text)
     hazard_score, score_alt = _score_from_images(snapshot.images, prefix="Product score")
@@ -316,9 +355,9 @@ def parse_product_snapshot(snapshot: PageSnapshot) -> dict[str, Any]:
             break
     if product_data_availability:
         payload["data_availability"] = product_data_availability
-    image = next((image for image in snapshot.images if image.get("src") and "score" not in normalize_text(image.get("alt", ""))), None)
-    if image:
-        payload["image_url"] = image["src"]
+    image_url = _select_product_image_url(snapshot.images)
+    if image_url:
+        payload["image_url"] = image_url
     return payload
 
 

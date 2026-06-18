@@ -175,6 +175,27 @@ def test_wayback_snapshot_and_junk_filters():
     assert not _looks_like_junk("https://www.ewg.org/skindeep/products/999984-Real_Product/")
 
 
+def test_select_product_image_skips_icons_placeholders_and_lazy_srcs():
+    from app.services.importers.ewg_public_scraper import _select_product_image_url
+
+    images = [
+        {"src": "https://static.ewg.org/skindeep/img/icon-search.svg", "alt": ""},
+        {"src": "https://x/score.png", "alt": "Product score: 04"},
+        # Lazy-loaded recommended product: truncated, no extension -> skipped.
+        {"src": "https://phorcys-static.ewg.org/cdn-cgi/image/width=220,height=220,quality=60/"
+                "https://phorcys-static.ewg.org/image/contents/629097/original.", "alt": ""},
+        {"src": "https://static.ewg.org/skindeep/img/missing_images/sd_logo.png", "alt": ""},
+        # Main product photo: Cloudflare-wrapped, full extension -> selected & unwrapped.
+        {"src": "https://phorcys-static.ewg.org/cdn-cgi/image/width=220,height=220,quality=60/"
+                "https://phorcys-static.ewg.org/image/contents/780979/original.png", "alt": ""},
+    ]
+    assert (
+        _select_product_image_url(images)
+        == "https://phorcys-static.ewg.org/image/contents/780979/original.png"
+    )
+    assert _select_product_image_url([{"src": "https://x/icon-search.svg", "alt": ""}]) is None
+
+
 def test_parse_proxy_variants():
     assert _parse_proxy(None) is None
     assert _parse_proxy("http://u:p@1.2.3.4:8080") == {
