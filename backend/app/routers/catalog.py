@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Select, case, desc, func, select
+from sqlalchemy import Select, and_, case, desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import (
@@ -10,6 +10,7 @@ from app.db.models import (
     ProductIngredient,
     ProductSourceLink,
     ProductTermLink,
+    RiskRule,
     SourceRecordFact,
 )
 from app.db.session import get_db
@@ -233,24 +234,57 @@ def list_directory_groups(
 
 @router.post("/directory/products", response_model=DirectoryProductsPageOut)
 def list_directory_products(payload: DirectoryProductsIn, db: Session = Depends(get_db)) -> dict:
-    stmt: Select[tuple[Product]]
+    product_filter = None
     if payload.group_kind == "brand":
         if db.get(Brand, payload.group_code) is None:
             raise HTTPException(status_code=404, detail="Brand not found")
-        stmt = select(Product).where(Product.brand_code == payload.group_code)
+        product_filter = Product.brand_code == payload.group_code
+        total_stmt = select(func.count()).select_from(Product).where(product_filter)
+        rank_from = select(Product.product_code)
     else:
         if db.get(Category, payload.group_code) is None:
             raise HTTPException(status_code=404, detail="Category not found")
-        stmt = select(Product).join(ProductCategory).where(ProductCategory.category_code == payload.group_code)
+        product_filter = ProductCategory.category_code == payload.group_code
+        total_stmt = (
+            select(func.count(func.distinct(Product.product_code)))
+            .select_from(Product)
+            .join(ProductCategory)
+            .where(product_filter)
+        )
+        rank_from = select(Product.product_code).join(ProductCategory)
 
-    products = list(
-        db.scalars(
-            stmt.options(*_product_options())
-            .order_by(Product.name)
+    total = db.scalar(total_stmt) or 0
+    coarse_score = func.coalesce(func.max(RiskRule.severity_score), 0).label("coarse_score")
+    matched_rule_count = func.count(func.distinct(RiskRule.risk_rule_code)).label("matched_rule_count")
+    window_limit = min(max(payload.limit * 4, payload.limit), 240)
+    rank_rows = db.execute(
+        rank_from.add_columns(coarse_score, matched_rule_count)
+        .outerjoin(ProductIngredient, ProductIngredient.product_code == Product.product_code)
+        .outerjoin(
+            RiskRule,
+            and_(
+                RiskRule.ingredient_code == ProductIngredient.ingredient_code,
+                RiskRule.active.is_(True),
+            ),
+        )
+        .where(product_filter)
+        .group_by(Product.product_code)
+        .order_by(desc("coarse_score"), desc("matched_rule_count"), Product.normalized_name)
+        .offset(payload.offset)
+        .limit(window_limit)
+    ).all()
+    product_codes = [row[0] for row in rank_rows]
+    products_by_code = {
+        product.product_code: product
+        for product in db.scalars(
+            select(Product)
+            .where(Product.product_code.in_(product_codes))
+            .options(*_product_options())
         )
         .unique()
         .all()
-    )
+    }
+    products = [products_by_code[code] for code in product_codes if code in products_by_code]
     summaries = []
     profile = payload.profile.model_dump()
     for product in products:
@@ -274,8 +308,8 @@ def list_directory_products(payload: DirectoryProductsIn, db: Session = Depends(
         )
     )
     return {
-        "items": summaries[payload.offset : payload.offset + payload.limit],
-        "total": len(summaries),
+        "items": summaries[: payload.limit],
+        "total": total,
         "limit": payload.limit,
         "offset": payload.offset,
     }

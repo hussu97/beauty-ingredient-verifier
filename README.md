@@ -33,20 +33,20 @@ npm install
 npm run dev -- --host 127.0.0.1
 ```
 
-Open `http://127.0.0.1:5173`. The scanner is the first screen; brand/category product browsing is available under `http://127.0.0.1:5173/directory`; database, source, and import tools are available under `http://127.0.0.1:5173/admin`. The backend auto-creates the local SQLite schema and demo source-backed records by default.
+Open `http://127.0.0.1:5173`. The scanner is the first screen; brand/category product browsing is available under `http://127.0.0.1:5173/directory`; database, source, and import tools are available under `http://127.0.0.1:5173/admin`. In local mode, the backend can auto-create the SQLite schema and demo source-backed records. Outside local mode, run Alembic migrations and disable demo bootstrap.
 
 Profile inputs are controlled custom dropdowns sourced from `shared/profile-options.json`. Free-text profile values from older local storage are canonicalized through aliases when possible and unsupported values are dropped rather than sent to risk rules.
 
-The homepage keeps the consumer flow compact: profile dropdowns, image upload, an interactive scale-style harm meter, and the matched product result. The scan progress bar shows exact browser upload progress and then an indeterminate matching state while the synchronous backend scan pipeline evaluates the image. Directory browsing is searchable, paginated, and uses adaptive layouts for desktop and mobile.
+The homepage keeps the consumer flow compact: profile dropdowns, image upload, an interactive scale-style harm meter, and the matched product result. `POST /scans` now enqueues a pending scan and returns immediately; the frontend shows exact browser upload progress, then polls `GET /scans/{scan_code}` while barcode/OCR/CLIP matching runs in a backend background task. Directory browsing is searchable, paginated, and uses adaptive layouts for desktop and mobile.
 
 ## Free Local ML Stack
 
-The scanner and image indexer now use a free local ML stack when enabled:
+The scanner and image indexer use a free local ML stack when enabled:
 
 - ZXing-C++ for barcode extraction.
 - PaddleOCR for product/ingredient text extraction.
 - Sentence Transformers CLIP embeddings for image similarity.
-- sqlite-vec as an optional local SQLite vector index, with JSON vectors still stored in `image_embeddings`.
+- sqlite-vec as an optional local SQLite vector index, with JSON vectors still stored in `image_embeddings`. Python cosine fallback remains available for small local embedding sets; larger embedding tables require sqlite-vec or a future production vector index.
 
 For the ML extras, prefer Python 3.11 or 3.12 because Paddle/Torch wheels often lag the newest Python releases:
 
@@ -99,6 +99,23 @@ beauty-product-verifier backfill-ewg-wayback-images --fetch-workers 8
 
 The importer stores raw EWG payloads, links them to products and ingredients, normalizes EWG categories to Open Beauty Facts-compatible canonical slugs, cross-validates structured EWG ingredients against packaging INCI text, preserves EWG ingredient hazard scores, and keeps source conflicts visible in product detail and `/admin/sources`. EWG pages generally do not expose barcodes; if an archived page includes UPC/EAN/GTIN metadata or visible text, it is used, otherwise fusion relies on brand/name/category/ingredient overlap and indexed product images.
 
+Local pipeline containers split heavy dependencies from the production API image:
+
+```bash
+docker compose -f docker-compose.pipeline.yml --profile scraper run --rm scraper import-ewg-wayback --max-products 0 --scrape-ingredients --fetch-workers 8
+docker compose -f docker-compose.pipeline.yml --profile indexer run --rm indexer index-images --all --batch-size 25 --download-workers 4
+```
+
+Local SQLite remains canonical for scraper/indexer-owned catalog data. Push idempotent deltas to production Postgres explicitly:
+
+```bash
+cd backend
+sync-local-to-prod --local-db sqlite:///./storage/beauty_product_verifier.sqlite3 --prod-db "$BPV_DATABASE_URL" --tables all --dry-run
+sync-local-to-prod --local-db sqlite:///./storage/beauty_product_verifier.sqlite3 --prod-db "$BPV_DATABASE_URL" --tables all --apply
+```
+
+Applied syncs are recorded in production `sync_runs`. Runtime/user tables (`scan_jobs`, `scan_candidates`, `risk_evaluations`) are intentionally excluded.
+
 ## API Surface
 
 - `GET /api/v1/health`
@@ -129,8 +146,11 @@ enrich-ingredients --help
 beauty-product-verifier apply-product-corrections --help
 index-images --help
 refresh-risk-signals --help
+sync-local-to-prod --help
 beauty-product-verifier --help
 ```
+
+`POST /api/v1/scans` returns `202 Accepted` with a pending scan job; clients should poll `GET /api/v1/scans/{scan_code}` until `completed` or `failed`.
 
 The Open Beauty Facts importer prefers local bulk files (`.jsonl`, `.jsonl.gz`, `.parquet`) and only uses the live API for one-off barcode lookups during scans. EWG ingestion uses archive.org Wayback captures; direct EWG API/file import and Playwright browser scraping are not supported paths.
 
@@ -140,3 +160,7 @@ The Open Beauty Facts importer prefers local bulk files (`.jsonl`, `.jsonl.gz`, 
 cd backend && source .venv/bin/activate && python -m pytest tests -v
 cd frontend && npm test -- --run && npm run build
 ```
+
+## Deployment
+
+Production v1 uses Vercel for `frontend/` and one GCP Compute Engine VM for the API, Postgres, pgvector, and Caddy TLS. The backend deploy workflow builds the lightweight API image with serving ML dependencies only; scraper/indexer dependencies stay in local pipeline images. See `PRODUCTION.md` for VM sizing, GitHub Secrets, Vercel setup, sync, and backup/restore runbooks.

@@ -339,7 +339,11 @@ def _upsert_brand(db: Session, name: str, source_record_code: str) -> Brand | No
     if not clean:
         return None
     normalized = normalize_text(clean)
-    brand = db.scalar(select(Brand).where(Brand.normalized_name == normalized))
+    cache: dict[str, Brand | None] = db.info.setdefault("obf_brands_by_normalized", {})
+    brand = cache.get(normalized)
+    if normalized not in cache:
+        brand = db.scalar(select(Brand).where(Brand.normalized_name == normalized))
+        cache[normalized] = brand
     if brand is None:
         brand = Brand(
             brand_code=make_code("brd", normalized),
@@ -349,6 +353,7 @@ def _upsert_brand(db: Session, name: str, source_record_code: str) -> Brand | No
         )
         db.add(brand)
         db.flush()
+        cache[normalized] = brand
     else:
         brand.name = clean
         brand.source_record_code = brand.source_record_code or source_record_code
@@ -358,18 +363,27 @@ def _upsert_brand(db: Session, name: str, source_record_code: str) -> Brand | No
 def _upsert_category(db: Session, raw: str) -> Category:
     slug = canonical_category_slug(raw)
     name = slug.replace("-", " ").strip().title()
-    category = db.scalar(select(Category).where(Category.slug == slug))
+    cache: dict[str, Category | None] = db.info.setdefault("obf_categories_by_slug", {})
+    category = cache.get(slug)
+    if slug not in cache:
+        category = db.scalar(select(Category).where(Category.slug == slug))
+        cache[slug] = category
     if category is None:
         category = Category(category_code=make_code("cat", slug), name=name, slug=slug)
         db.add(category)
         db.flush()
+        cache[slug] = category
     return category
 
 
 def _upsert_ingredient(db: Session, raw_name: str, source_record_code: str) -> Ingredient:
     canonical = canonical_ingredient_name(raw_name)
     normalized = normalize_text(canonical)
-    ingredient = db.scalar(select(Ingredient).where(Ingredient.normalized_name == normalized))
+    cache: dict[str, Ingredient | None] = db.info.setdefault("obf_ingredients_by_normalized", {})
+    ingredient = cache.get(normalized)
+    if normalized not in cache:
+        ingredient = db.scalar(select(Ingredient).where(Ingredient.normalized_name == normalized))
+        cache[normalized] = ingredient
     if ingredient is None:
         ingredient = Ingredient(
             ingredient_code=make_code("ing", normalized),
@@ -382,6 +396,7 @@ def _upsert_ingredient(db: Session, raw_name: str, source_record_code: str) -> I
         )
         db.add(ingredient)
         db.flush()
+        cache[normalized] = ingredient
     else:
         ingredient.source_record_code = ingredient.source_record_code or source_record_code
     return ingredient

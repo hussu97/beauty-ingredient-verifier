@@ -47,13 +47,14 @@ def upsert_source_record(
     existing = db.scalar(
         select(SourceRecord).where(
             SourceRecord.source_code == source_code,
+            SourceRecord.record_type == record_type,
             SourceRecord.external_id == external_id,
         )
     )
     record_hash = content_hash(payload)
     if existing is None:
         existing = SourceRecord(
-            source_record_code=make_code("sr", f"{source_code}:{external_id}"),
+            source_record_code=make_code("sr", f"{source_code}:{record_type}:{external_id}"),
             source_code=source_code,
             external_id=external_id,
             record_type=record_type,

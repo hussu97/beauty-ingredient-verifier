@@ -1,106 +1,201 @@
-# Production Plan
+# Production Runbook
 
-## 1. Docker
+## Target Topology
 
-Use Docker Compose locally for PostgreSQL parity and production-like backend startup.
+- Frontend: Vercel project rooted at `frontend/`.
+- Backend: one cost-conscious GCP Compute Engine VM in `us-central1` by default.
+- Production database: PostgreSQL 16 with pgvector on the same VM.
+- Local catalog pipeline: scraper and image-indexer containers run locally against local SQLite, then explicitly sync catalog/source/embedding tables to production Postgres.
 
-Planned services:
+Start with an `e2-standard-4` VM or equivalent (**4 vCPU / 16 GB RAM**) and a separate persistent balanced/SSD disk mounted for Postgres data at `/opt/bpv/postgres-data`. Start at **256 GB** and resize the disk before Postgres reaches sustained storage pressure.
 
-- `api`: FastAPI container running `uvicorn app.main:app`.
-- `db`: PostgreSQL 16.
-- `frontend`: Vite static build or Vercel-hosted in real production.
+Production does not require GCS in v1. Product images are stored as source URLs in `product_images.url`; local indexing may cache files under `backend/storage/product-images`, but production relies on synced `image_embeddings.vector` plus the Postgres pgvector side index.
 
-Run migrations before serving production traffic:
+## Vercel Frontend
+
+Create the Vercel project from `frontend/`.
+
+- Build command: `npm run build`
+- Output directory: `dist`
+- Framework: Vite
+- Env: `VITE_API_BASE_URL=https://<api-domain>/api/v1`
+
+`frontend/vercel.json` rewrites SPA routes to `index.html`. Keep frontend secrets in Vercel only; do not copy backend database or deploy secrets into Vercel.
+
+## GCP VM Bootstrap
+
+1. Create the VM in `us-central1` unless a cheaper equivalent region is deliberately chosen for the whole stack.
+2. Attach and mount the data disk:
+
+```bash
+sudo mkdir -p /opt/bpv/postgres-data
+sudo chown -R "$USER":"$USER" /opt/bpv
+```
+
+3. Install Docker Engine and the Docker Compose plugin.
+4. Point DNS for `API_DOMAIN` at the VM static IP.
+5. Open ports `80` and `443`; keep API port `8000` bound to localhost only.
+
+The VM runs `docker-compose.prod.yml`:
+
+- `api`: FastAPI with API dependencies, PostgreSQL client support, CLIP image embeddings, and barcode extraction.
+- `postgres`: `pgvector/pgvector:pg16` with data on the mounted disk.
+- `caddy`: TLS reverse proxy for `API_DOMAIN`.
+
+Production API settings are enforced through `/opt/bpv/.env`:
+
+```text
+BPV_ENV=production
+BPV_AUTO_CREATE_TABLES=false
+BPV_BOOTSTRAP_DEMO_DATA=false
+BPV_ENABLE_OPTIONAL_ML=true
+BPV_ENABLE_SQLITE_VEC=false
+```
+
+## GitHub Actions Deploy
+
+`.github/workflows/backend-deploy.yml` runs backend tests, builds `backend/Dockerfile`, pushes the API image to GHCR, copies deployment files to `/opt/bpv`, writes `/opt/bpv/.env` from GitHub Secrets, runs Alembic, restarts Compose, and smokes `GET /api/v1/health`.
+
+Required GitHub Secrets:
+
+| Secret | Purpose |
+| --- | --- |
+| `GCP_VM_HOST` | VM host or IP for SSH. |
+| `GCP_VM_USER` | SSH user with Docker access. |
+| `GCP_VM_SSH_KEY` | Private deploy key. |
+| `GHCR_TOKEN` | Optional package token; `GITHUB_TOKEN` is used when omitted. |
+| `BPV_DATABASE_URL` | Production SQLAlchemy URL, e.g. `postgresql+psycopg://bpv:<password>@postgres:5432/beauty_product_verifier`. |
+| `BPV_POSTGRES_DB` | Postgres database name. |
+| `BPV_POSTGRES_USER` | Postgres user. |
+| `BPV_POSTGRES_PASSWORD` | Postgres password. |
+| `BPV_POSTGRES_DATA_DIR` | Optional host data path; defaults to `/opt/bpv/postgres-data`. |
+| `BPV_CORS_ORIGINS` | Comma-separated Vercel origins. |
+| `BPV_OPEN_BEAUTY_FACTS_USER_AGENT` | Polite Open Beauty Facts contact UA. |
+| `BPV_EWG_USER_AGENT` | Polite EWG/archive import contact UA. |
+| `API_DOMAIN` | Backend API domain for Caddy. |
+| `ACME_EMAIL` | TLS certificate contact email. |
+
+## Local Scrape And Index
+
+Use local SQLite as the canonical source for scraper/indexer-owned tables.
+
+Scraper container:
+
+```bash
+docker compose -f docker-compose.pipeline.yml --profile scraper run --rm scraper \
+  import-ewg-wayback --max-products 0 --scrape-ingredients --fetch-workers 8
+```
+
+Indexer container:
+
+```bash
+docker compose -f docker-compose.pipeline.yml --profile indexer run --rm indexer \
+  index-images --all --batch-size 25 --download-workers 4
+```
+
+Local product image downloads stay under `backend/storage/product-images`. Production should not write catalog/source/embedding rows except through the sync CLI below.
+
+## Local To Production Sync
+
+Run Alembic first, then sync idempotent table upserts:
 
 ```bash
 cd backend
-alembic upgrade head
+source .venv/bin/activate
+sync-local-to-prod \
+  --local-db sqlite:///./storage/beauty_product_verifier.sqlite3 \
+  --prod-db "$BPV_DATABASE_URL" \
+  --tables all \
+  --dry-run
+
+sync-local-to-prod \
+  --local-db sqlite:///./storage/beauty_product_verifier.sqlite3 \
+  --prod-db "$BPV_DATABASE_URL" \
+  --tables all \
+  --apply
 ```
 
-## 2. Free Online Services
+The sync writes `sync_runs` rows in production for applied runs and refreshes the Postgres `image_embedding_vectors` pgvector index after `image_embeddings` are synced.
 
-- Backend: Render/Railway/Fly.io can run the FastAPI container.
-- Database: free-tier PostgreSQL where available.
-- Frontend: Vercel with `VITE_API_BASE_URL` pointing at the backend.
-- Storage: local disk is fine for local MVP; production should use object storage for uploads/images.
-
-## 3. GCP
-
-- Backend: Cloud Run service from a container image.
-- Database: Cloud SQL for PostgreSQL.
-- Batch imports: Cloud Run Jobs scheduled by Cloud Scheduler.
-- Uploaded images and cached source images: Cloud Storage.
-- Secrets: Secret Manager for database URL and future provider keys.
-
-Cloud Run should run with:
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port $PORT
-```
-
-## 4. Vercel Frontend
-
-Build command:
-
-```bash
-npm run build
-```
-
-Output directory:
+Synced tables, in dependency order:
 
 ```text
-dist
+sources, source_records, brands, categories, products, ingredients,
+source_record_facts, product_categories, product_images, ingredient_synonyms,
+product_ingredients, product_source_links, ingredient_source_links,
+canonical_terms, term_aliases, product_term_links, ingredient_term_links,
+risk_rules, adverse_event_signals, image_embeddings
 ```
 
-Set `VITE_API_BASE_URL` to the deployed backend `/api/v1` base URL.
+Never synced from local to production:
 
-The Vercel app should route all frontend paths to the Vite app, including `/`, `/directory`, `/products/:productCode`, `/ingredients/:ingredientCode`, and `/admin/*`. The directory PLP calls searchable `GET /products/directory/groups` requests and paginated `POST /products/directory/products` requests on the backend API base.
+```text
+scan_jobs, scan_candidates, risk_evaluations
+```
 
-Keep `shared/profile-options.json` deployed with both frontend and backend source. It is the controlled clinical profile vocabulary for custom dropdown inputs and backend alias matching; deployments should run the backend and frontend tests after changing it.
+Validate after sync:
 
-Profile dropdowns and the harm-meter scale are fully client-side UI behavior; no extra production environment variables are required for those interactions.
+```bash
+sync-local-to-prod \
+  --local-db sqlite:///./storage/beauty_product_verifier.sqlite3 \
+  --prod-db "$BPV_DATABASE_URL" \
+  --tables all \
+  --validate-only
+```
 
-The current scan UI can report exact upload progress from the browser. Matching/OCR/embedding work is displayed as an indeterminate progress state until the synchronous `POST /api/v1/scans` response returns. Per-stage backend percentages would require an async scan job or streamed progress endpoint later.
+If validation reports row-count mismatches, inspect whether production has stale catalog rows. The v1 sync performs upserts; it does not delete rows missing from local.
 
-EWG Skin Deep is supported as an enrichment source through archive.org Wayback captures via `import-ewg-wayback`. The importer stores raw parsed EWG payloads in `source_records`, queryable unmodeled fields in `source_record_facts`, links products and ingredients through source-fusion tables, and exposes normalized source attributes/conflicts in product detail and admin source views. Keep EWG-provided values source-separated from Open Beauty Facts so provenance and conflicts remain auditable.
+## Backup And Restore
 
-## 5. Environment Variables
+Back up the production database before large syncs:
+
+```bash
+docker compose --env-file /opt/bpv/.env -f /opt/bpv/docker-compose.prod.yml exec postgres \
+  pg_dump -U "$BPV_POSTGRES_USER" "$BPV_POSTGRES_DB" > bpv-prod.sql
+```
+
+Restore into a maintenance window:
+
+```bash
+cat bpv-prod.sql | docker compose --env-file /opt/bpv/.env -f /opt/bpv/docker-compose.prod.yml exec -T postgres \
+  psql -U "$BPV_POSTGRES_USER" "$BPV_POSTGRES_DB"
+```
+
+## Environment Variables
+
+`PRODUCTION.md` is the source of truth for env vars; keep `.env.example` and `frontend/.env.example` aligned.
 
 | Variable | Service | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `BPV_APP_NAME` | Backend | No | `Beauty Product Verifier` | Human-readable API name. |
-| `BPV_ENV` | Backend | No | `local` | Runtime environment label. |
-| `BPV_DATABASE_URL` | Backend | Yes | `sqlite:///./storage/beauty_product_verifier.sqlite3` | SQLAlchemy database URL. Use PostgreSQL in production. |
-| `BPV_CORS_ORIGINS` | Backend | No | `http://127.0.0.1:5173,http://localhost:5173` | Comma-separated allowed frontend origins. |
+| `BPV_ENV` | Backend | No | `local` | Runtime environment label; production must set `production`. |
+| `BPV_DATABASE_URL` | Backend | Yes | `sqlite:///./storage/beauty_product_verifier.sqlite3` | SQLAlchemy URL. Use Postgres in production. |
+| `BPV_CORS_ORIGINS` | Backend | Yes in prod | `http://127.0.0.1:5173,http://localhost:5173` | Comma-separated allowed frontend origins. |
 | `BPV_STORAGE_DIR` | Backend | No | `./storage` | Upload and local artifact directory. |
-| `BPV_AUTO_CREATE_TABLES` | Backend | No | `true` | Local convenience; disable in production and use Alembic. |
-| `BPV_BOOTSTRAP_DEMO_DATA` | Backend | No | `true` | Seeds source-backed demo data when database is empty. |
-| `BPV_OPEN_BEAUTY_FACTS_USER_AGENT` | Backend | Yes for live lookup | `BeautyProductVerifier/0.1 (local-dev@example.com)` | Required polite User-Agent for Open Beauty Facts API calls. |
+| `BPV_AUTO_CREATE_TABLES` | Backend | No | `true` | Local convenience only; production must be `false`. |
+| `BPV_BOOTSTRAP_DEMO_DATA` | Backend | No | `true` | Local seed convenience only; production must be `false`. |
+| `BPV_OPEN_BEAUTY_FACTS_USER_AGENT` | Backend/jobs | Yes | `BeautyProductVerifier/0.1 (local-dev@example.com)` | Polite Open Beauty Facts UA. |
 | `BPV_ENABLE_LIVE_OPEN_BEAUTY_FACTS_LOOKUP` | Backend | No | `true` | Allows one-off barcode lookup during scans. |
-| `BPV_ENABLE_OPTIONAL_ML` | Backend | No | `false` | Enables optional barcode/OCR/embedding providers if installed. |
-| `BPV_ENABLE_SQLITE_VEC` | Backend | No | `true` | Mirrors image embeddings into sqlite-vec when SQLite and the extension are available. |
-| `BPV_OCR_LANGUAGE` | Backend | No | `en` | PaddleOCR language code. |
-| `BPV_IMAGE_EMBEDDING_MODEL` | Backend | No | `sentence-transformers/clip-ViT-B-32` | Sentence Transformers image embedding model. |
-| `BPV_IMAGE_DOWNLOAD_TIMEOUT_SECONDS` | Backend | No | `20` | Timeout for caching product images during `index-images`. |
-| `BPV_EWG_ATTRIBUTION_TEXT` | Backend/frontend | No | `Contains information from EWG Skin Deep.` | Attribution text to show where EWG data is surfaced. |
-| `BPV_EWG_USER_AGENT` | Backend/jobs | No | `BeautyProductVerifier/0.1 (local-dev@example.com)` | Attribution/contact User-Agent for EWG-related import workflows. |
+| `BPV_ENABLE_OPTIONAL_ML` | Backend/jobs | No | `false` | Enables installed barcode/OCR/embedding providers. Production API sets `true`. |
+| `BPV_ENABLE_SQLITE_VEC` | Backend/jobs | No | `true` | SQLite-only vector mirror. Production must be `false`. |
+| `BPV_OCR_LANGUAGE` | Backend | No | `en` | PaddleOCR language when OCR deps are installed. |
+| `BPV_IMAGE_EMBEDDING_MODEL` | Backend/jobs | No | `sentence-transformers/clip-ViT-B-32` | CLIP/Sentence Transformers model. |
+| `BPV_IMAGE_DOWNLOAD_TIMEOUT_SECONDS` | Jobs | No | `20` | Product image download timeout for indexing. |
+| `BPV_EWG_ATTRIBUTION_TEXT` | Backend/frontend | No | `Contains information from EWG Skin Deep.` | Attribution text wherever EWG data is surfaced. |
+| `BPV_EWG_USER_AGENT` | Jobs | Yes for EWG import | `BeautyProductVerifier/0.1 (local-dev@example.com)` | Polite EWG/archive import UA. |
+| `BPV_API_IMAGE` | Compose | Yes in prod | none | GHCR image tag deployed by Actions. |
+| `BPV_POSTGRES_DB` | Compose | Yes in prod | `beauty_product_verifier` | Postgres database name. |
+| `BPV_POSTGRES_USER` | Compose | Yes in prod | `bpv` | Postgres user. |
+| `BPV_POSTGRES_PASSWORD` | Compose | Yes in prod | none | Postgres password. |
+| `BPV_POSTGRES_DATA_DIR` | Compose | No | `/opt/bpv/postgres-data` | Host path for Postgres data. |
+| `API_DOMAIN` | Caddy | Yes in prod | none | Public API domain. |
+| `ACME_EMAIL` | Caddy | Yes in prod | none | ACME/TLS contact email. |
 | `VITE_API_BASE_URL` | Frontend | Yes | `http://127.0.0.1:8000/api/v1` | Backend API base URL. |
 
-## 6. ML Deployment Notes
+## Verification
 
-The free ML stack is best run locally or as a separate batch worker:
-
-- Install backend extras with `python -m pip install -e ".[ml,data]"`.
-- **EWG path: the Wayback Machine importer.** `beauty-product-verifier import-ewg-wayback --max-products N [--scrape-ingredients --max-ingredients M] [--from-date 2023]` pulls EWG Skin Deep pages from archive.org's mirror over plain HTTP. archive.org is not behind Cloudflare, so there is no Turnstile, no browser, and no egress-IP-reputation problem. EWG Skin Deep is entirely a cosmetics/beauty database, so the CDX index covers product and ingredient pages directly without crawling category listings. Imports are idempotent (keyed by EWG product/ingredient slug), so runs are resumable. Use `--from-date` to prefer recent captures and `--request-delay` to stay polite to archive.org.
-- EWG product pages usually do not expose barcodes. The parser uses archived UPC/EAN/GTIN metadata or visible labels when present, then falls back to brand/name/canonical-category/ingredient fusion. Product images from EWG and OBF should be indexed with CLIP so barcode-less scans can still match visually.
-- EWG structured ingredients are cross-validated against packaging INCI text before product/ingredient rows are written. This keeps EWG hazard scores attached to real INCI names and prevents page chrome or score labels from polluting source fusion.
-- Set `BPV_ENABLE_OPTIONAL_ML=true`.
-- After importing older Open Beauty Facts exports, run `beauty-product-verifier backfill-open-beauty-facts-images` before image indexing if product image coverage looks low.
-- Run `beauty-product-verifier import-ewg-wayback --max-products 0 --scrape-ingredients --fetch-workers 8` to ingest EWG product and ingredient concern data. Use `--dry-run` first when auditing parser behavior.
-- Run `beauty-product-verifier backfill-ewg-wayback-images --fetch-workers 8` if EWG products were imported before image support existed.
-- Run `beauty-product-verifier apply-product-corrections` after imports when using the built-in source-backed correction library for known incomplete crowdsourced product records.
-- Run `index-images --all --batch-size 25 --download-workers 4` after product imports to populate CLIP embeddings.
-- Use `index-images --status`, `index-images --pause`, and `index-images --resume` for resumable local or worker runs.
-- Prefer parallel downloads over parallel CLIP worker processes for SQLite/local runs. Embedding and writes are intentionally serial to avoid model-memory duplication and SQLite write contention.
-- Keep Cloud Run API instances lean unless OCR/CLIP latency is acceptable for uploads.
-- Use PostgreSQL plus pgvector later for production vector search; SQLite uses sqlite-vec locally.
+```bash
+cd backend && source .venv/bin/activate && python -m pytest tests -v
+cd frontend && npm test -- --run && npm run build
+curl -s http://127.0.0.1:8000/api/v1/health
+```

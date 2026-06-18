@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.models import ImageEmbedding, Product, ProductImage
+from app.db.models import ImageEmbedding, Product, ProductImage, ScanCandidate
 from app.services.codes import make_code
 from app.services.image_index import (
     ImageDownloadResult,
@@ -164,10 +164,19 @@ def test_scan_uses_image_embedding_candidates(
     monkeypatch.setattr(settings, "image_embedding_model", "test-clip")
 
     product = db_session.scalar(select(Product).limit(1))
+    image_code = "img_test_scan_hit"
+    db_session.add(
+        ProductImage(
+            image_code=image_code,
+            product_code=product.product_code,
+            kind="front",
+        )
+    )
+    db_session.flush()
     db_session.add(
         ImageEmbedding(
             embedding_code=make_code("emb", "scan-image-hit"),
-            image_code="img_test_scan_hit",
+            image_code=image_code,
             product_code=product.product_code,
             model_name="test-clip",
             dimensions=3,
@@ -187,7 +196,13 @@ def test_scan_uses_image_embedding_candidates(
     )
 
     scan = process_scan(db_session, image_path=upload_path, upload_filename=upload_path.name)
+    candidates = db_session.scalars(
+        select(ScanCandidate)
+        .where(ScanCandidate.scan_code == scan.scan_code)
+        .order_by(ScanCandidate.rank)
+    ).all()
+
     assert scan.status == "completed"
     assert scan.matched_product_code == product.product_code
-    assert scan.candidates
-    assert "CLIP image similarity" in scan.candidates[0].match_reasons
+    assert candidates
+    assert "CLIP image similarity" in candidates[0].match_reasons

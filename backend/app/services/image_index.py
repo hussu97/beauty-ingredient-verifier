@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import json
 import mimetypes
 from concurrent.futures import ThreadPoolExecutor
@@ -202,11 +203,21 @@ def _download_image_target(target: ImageDownloadTarget) -> ImageDownloadResult:
                         response = fallback_response
                         download_url = fallback_url
             response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            if content_type and "image" not in content_type.lower():
+                raise ValueError(f"Unexpected image content type: {content_type}")
+            content_length = response.headers.get("content-length")
+            if content_length and int(content_length) > MAX_IMAGE_DOWNLOAD_BYTES:
+                raise ValueError(f"Image exceeds {MAX_IMAGE_DOWNLOAD_BYTES} bytes")
+            content = response.content
+            if len(content) > MAX_IMAGE_DOWNLOAD_BYTES:
+                raise ValueError(f"Image exceeds {MAX_IMAGE_DOWNLOAD_BYTES} bytes")
         extension = _extension_from_response(download_url, response.headers.get("content-type"))
         path = cache_dir / f"{target.image_code}{extension}"
-        path.write_bytes(response.content)
+        path.write_bytes(content)
         return ImageDownloadResult(image_code=target.image_code, path=path, url=download_url)
     except Exception:
+        logger.exception("Image download failed for %s", target.url)
         return ImageDownloadResult(image_code=target.image_code, path=None, url=target.url)
 
 
@@ -471,3 +482,5 @@ def run_resumable_image_index(
         last_image_code=last_image_code,
         counts=counts,
     )
+logger = logging.getLogger(__name__)
+MAX_IMAGE_DOWNLOAD_BYTES = 15 * 1024 * 1024

@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import re
 import shutil
+import logging
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models import ScanCandidate, ScanJob
+from app.db.session import SessionLocal
 from app.services.codes import make_code
 from app.services.importers.open_beauty_facts import lookup_open_beauty_facts_barcode
 from app.services.ml import embed_image, extract_barcode, extract_ocr_text
 from app.services.search import merge_product_matches, search_products, search_products_by_image_embedding
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_fields(ocr_text: str) -> tuple[str | None, str | None, str | None]:
@@ -37,15 +41,24 @@ def save_upload(fileobj, filename: str) -> Path:
     return target
 
 
-def process_scan(db: Session, *, image_path: Path, upload_filename: str) -> ScanJob:
-    settings = get_settings()
+def create_scan_job(db: Session, *, image_path: Path, upload_filename: str) -> ScanJob:
     scan = ScanJob(
         scan_code=make_code("scan"),
         upload_filename=upload_filename,
         image_path=str(image_path),
-        status="processing",
+        status="pending",
     )
     db.add(scan)
+    db.flush()
+    return scan
+
+
+def _run_scan(db: Session, scan: ScanJob) -> ScanJob:
+    settings = get_settings()
+    image_path = Path(scan.image_path)
+    scan.status = "processing"
+    scan.error_message = None
+    scan.candidates.clear()
     db.flush()
     try:
         barcode = extract_barcode(image_path, enabled=settings.enable_optional_ml)
@@ -108,7 +121,23 @@ def process_scan(db: Session, *, image_path: Path, upload_filename: str) -> Scan
         scan.confidence_score = best.confidence if best else 0
         scan.matched_product_code = best.product.product_code if best and best.confidence >= 0.62 else None
     except Exception as exc:
+        logger.exception("Scan processing failed for %s", scan.scan_code)
         scan.status = "failed"
         scan.error_message = str(exc)
     db.flush()
     return scan
+
+
+def process_scan(db: Session, *, image_path: Path, upload_filename: str) -> ScanJob:
+    scan = create_scan_job(db, image_path=image_path, upload_filename=upload_filename)
+    return _run_scan(db, scan)
+
+
+def process_scan_job(scan_code: str) -> None:
+    with SessionLocal() as db:
+        scan = db.get(ScanJob, scan_code)
+        if scan is None:
+            logger.warning("Scan job %s disappeared before processing", scan_code)
+            return
+        _run_scan(db, scan)
+        db.commit()

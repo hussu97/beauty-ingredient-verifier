@@ -24,6 +24,7 @@ from app.services.importers.open_beauty_facts import (
 )
 from app.services.importers.ewg_wayback import backfill_wayback_images, import_ewg_from_wayback
 from app.services.product_corrections import apply_source_backed_product_corrections
+from app.services.data_sync import run_prod_migrations, sync_local_to_prod
 
 app = typer.Typer(help="Beauty Product Verifier maintenance CLI")
 console = Console()
@@ -285,6 +286,55 @@ def refresh_risk_signals_command(
     console.print(f"Refreshed {count} adverse-event signal row(s).")
 
 
+@app.command("sync-local-to-prod")
+def sync_local_to_prod_command(
+    local_db: str = typer.Option(
+        ...,
+        "--local-db",
+        help="Canonical local SQLite SQLAlchemy URL, e.g. sqlite:///./storage/beauty_product_verifier.sqlite3.",
+    ),
+    prod_db: str = typer.Option(
+        ...,
+        "--prod-db",
+        help="Production PostgreSQL SQLAlchemy URL.",
+    ),
+    tables: str = typer.Option(
+        "all",
+        "--tables",
+        help="Comma-separated sync table list or 'all'. Runtime scan/evaluation tables are forbidden.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Count rows without writing to production."),
+    apply: bool = typer.Option(False, "--apply", help="Apply idempotent upserts to production."),
+    validate_only: bool = typer.Option(False, "--validate-only", help="Compare local/prod counts without writing."),
+    batch_size: int = typer.Option(500, "--batch-size", min=1),
+    skip_migrations: bool = typer.Option(
+        False,
+        "--skip-migrations",
+        help="Skip Alembic upgrade before --apply. Intended only for tests or already-migrated databases.",
+    ),
+) -> None:
+    selected_modes = sum(bool(flag) for flag in (dry_run, apply, validate_only))
+    if selected_modes > 1:
+        raise typer.BadParameter("Use only one of --dry-run, --apply, or --validate-only.")
+    mode = "apply" if apply else "validate-only" if validate_only else "dry-run"
+
+    if mode == "apply" and not skip_migrations:
+        console.print("Running Alembic migrations on production database...")
+        run_prod_migrations(prod_db)
+
+    result = sync_local_to_prod(
+        local_db_url=local_db,
+        prod_db_url=prod_db,
+        tables=tables,
+        mode=mode,
+        batch_size=batch_size,
+    )
+    console.print_json(data=result.as_dict())
+
+    if result.status in {"failed", "validation_failed"}:
+        raise typer.Exit(code=1)
+
+
 def main() -> None:
     app()
 
@@ -323,3 +373,7 @@ def index_images_entry() -> None:
 
 def refresh_risk_signals_entry() -> None:
     _run_single_command("refresh-risk-signals")
+
+
+def sync_local_to_prod_entry() -> None:
+    _run_single_command("sync-local-to-prod")

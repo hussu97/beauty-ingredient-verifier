@@ -1,0 +1,43 @@
+services:
+  scraper:
+    profiles: ["scraper"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.pipeline
+      args:
+        BPV_EXTRAS: postgres,data
+    environment:
+      BPV_ENV: local
+      BPV_DATABASE_URL: sqlite:////app/storage/beauty_product_verifier.sqlite3
+      BPV_STORAGE_DIR: /app/storage
+      BPV_AUTO_CREATE_TABLES: "true"
+      BPV_BOOTSTRAP_DEMO_DATA: "false"
+      BPV_ENABLE_OPTIONAL_ML: "false"
+      BPV_ENABLE_SQLITE_VEC: "true"
+      BPV_OPEN_BEAUTY_FACTS_USER_AGENT: ${BPV_OPEN_BEAUTY_FACTS_USER_AGENT:-BeautyProductVerifier/0.1 (local-dev@example.com)}
+      BPV_EWG_USER_AGENT: ${BPV_EWG_USER_AGENT:-BeautyProductVerifier/0.1 (local-dev@example.com)}
+    volumes:
+      - ./backend/storage:/app/storage
+      - ./data:/data:ro
+    command: ["beauty-product-verifier", "--help"]
+
+  indexer:
+    profiles: ["indexer"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.pipeline
+      args:
+        BPV_EXTRAS: postgres,ml,data
+    environment:
+      BPV_ENV: local
+      BPV_DATABASE_URL: sqlite:////app/storage/beauty_product_verifier.sqlite3
+      BPV_STORAGE_DIR: /app/storage
+      BPV_AUTO_CREATE_TABLES: "true"
+      BPV_BOOTSTRAP_DEMO_DATA: "false"
+      BPV_ENABLE_OPTIONAL_ML: "true"
+      BPV_ENABLE_SQLITE_VEC: "true"
+      BPV_IMAGE_EMBEDDING_MODEL: ${BPV_IMAGE_EMBEDDING_MODEL:-sentence-transformers/clip-ViT-B-32}
+      BPV_IMAGE_DOWNLOAD_TIMEOUT_SECONDS: ${BPV_IMAGE_DOWNLOAD_TIMEOUT_SECONDS:-20}
+    volumes:
+      - ./backend/storage:/app/storage
+    command: ["index-images", "--status"]

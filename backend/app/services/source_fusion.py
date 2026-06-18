@@ -240,6 +240,13 @@ def link_product_source(
     code = make_code("psl", f"{product.product_code}:{record.source_record_code}")
     link = db.get(ProductSourceLink, code)
     if link is None:
+        link = db.scalar(
+            select(ProductSourceLink).where(
+                ProductSourceLink.source_code == record.source_code,
+                ProductSourceLink.external_id == external_id,
+            )
+        )
+    if link is None:
         link = ProductSourceLink(
             product_source_link_code=code,
             product_code=product.product_code,
@@ -254,12 +261,24 @@ def link_product_source(
         )
         db.add(link)
     else:
+        link.product_code = product.product_code
+        link.source_record_code = record.source_record_code
+        link.source_code = record.source_code
         link.external_id = external_id
         link.source_url = record.source_url
         link.match_method = match_method
         link.match_confidence = match_confidence
         link.source_updated_at = source_updated_at
         link.active = active
+    stale_links = db.scalars(
+        select(ProductSourceLink).where(
+            ProductSourceLink.source_code == record.source_code,
+            ProductSourceLink.external_id == external_id,
+            ProductSourceLink.product_source_link_code != link.product_source_link_code,
+        )
+    ).all()
+    for stale_link in stale_links:
+        db.delete(stale_link)
     return link
 
 
@@ -289,6 +308,9 @@ def link_ingredient_source(
         )
         db.add(link)
     else:
+        link.ingredient_code = ingredient.ingredient_code
+        link.source_record_code = record.source_record_code
+        link.source_code = record.source_code
         link.external_id = external_id
         link.source_url = record.source_url
         link.match_method = match_method

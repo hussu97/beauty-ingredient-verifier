@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rapidfuzz import fuzz
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session, selectinload
 
-from app.db.models import ImageEmbedding, Product
+from app.db.models import Brand, ImageEmbedding, Ingredient, Product, ProductIngredient
 from app.services.ml import cosine_similarity
 from app.services.normalization import normalize_text, split_ingredients
-from app.services.vector_store import query_sqlite_vec
+from app.services.vector_store import query_postgres_vec, query_sqlite_vec
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,89 @@ class ProductMatch:
     product: Product
     confidence: float
     reasons: list[str]
+
+
+def _product_load_options() -> tuple:
+    return (
+        selectinload(Product.brand),
+        selectinload(Product.ingredients).selectinload(ProductIngredient.ingredient),
+    )
+
+
+def _add_candidates(candidates: dict[str, Product], products: list[Product], *, limit: int) -> None:
+    for product in products:
+        candidates.setdefault(product.product_code, product)
+        if len(candidates) >= limit:
+            break
+
+
+def _candidate_products(
+    db: Session,
+    *,
+    normalized_query: str,
+    raw_query: str | None,
+    query_ingredients: set[str],
+    limit: int,
+) -> list[Product]:
+    candidates: dict[str, Product] = {}
+    candidate_limit = max(limit * 80, 120)
+
+    if normalized_query:
+        like_query = f"%{normalized_query}%"
+        filters = [
+            Product.normalized_name.like(like_query),
+            Brand.normalized_name.like(like_query),
+        ]
+        if raw_query:
+            filters.extend(
+                [
+                    Product.product_code.like(f"%{raw_query}%"),
+                    Product.barcode.like(f"%{raw_query}%"),
+                ]
+            )
+        stmt = (
+            select(Product)
+            .outerjoin(Brand)
+            .where(or_(*filters))
+            .options(*_product_load_options())
+            .order_by(Product.normalized_name)
+            .limit(candidate_limit)
+        )
+        _add_candidates(candidates, list(db.scalars(stmt).unique().all()), limit=candidate_limit)
+
+        if len(candidates) < candidate_limit:
+            tokens = [token for token in normalized_query.split() if len(token) >= 3][:5]
+            if tokens:
+                token_filters = [
+                    or_(Product.normalized_name.like(f"%{token}%"), Brand.normalized_name.like(f"%{token}%"))
+                    for token in tokens
+                ]
+                stmt = (
+                    select(Product)
+                    .outerjoin(Brand)
+                    .where(or_(*token_filters))
+                    .options(*_product_load_options())
+                    .order_by(Product.normalized_name)
+                    .limit(candidate_limit)
+                )
+                _add_candidates(candidates, list(db.scalars(stmt).unique().all()), limit=candidate_limit)
+
+    if query_ingredients and len(candidates) < candidate_limit:
+        ingredient_stmt = (
+            select(Product)
+            .join(ProductIngredient)
+            .join(Ingredient)
+            .where(Ingredient.normalized_name.in_(query_ingredients))
+            .options(*_product_load_options())
+            .limit(candidate_limit)
+        )
+        _add_candidates(candidates, list(db.scalars(ingredient_stmt).unique().all()), limit=candidate_limit)
+
+    if not candidates and not normalized_query and not query_ingredients:
+        stmt = select(Product).options(*_product_load_options()).order_by(Product.updated_at.desc()).limit(candidate_limit)
+        _add_candidates(candidates, list(db.scalars(stmt).unique().all()), limit=candidate_limit)
+
+    return list(candidates.values())
 
 
 def search_products(
@@ -32,9 +115,16 @@ def search_products(
         if product is not None:
             return [ProductMatch(product=product, confidence=0.99, reasons=["barcode exact match"])]
 
-    products = db.scalars(select(Product).limit(500)).all()
     normalized_query = normalize_text(query)
     query_ingredients = {normalize_text(item) for item in split_ingredients(ingredient_text)}
+    query_ingredients.discard("")
+    products = _candidate_products(
+        db,
+        normalized_query=normalized_query,
+        raw_query=query,
+        query_ingredients=query_ingredients,
+        limit=limit,
+    )
     matches: list[ProductMatch] = []
     for product in products:
         reasons: list[str] = []
@@ -72,7 +162,9 @@ def search_products_by_image_embedding(
     if not vector:
         return []
 
-    hits = query_sqlite_vec(db, model_name=model_name, vector=vector, limit=limit * 4)
+    hits = query_postgres_vec(db, model_name=model_name, vector=vector, limit=limit * 4)
+    if not hits:
+        hits = query_sqlite_vec(db, model_name=model_name, vector=vector, limit=limit * 4)
     matches_by_product: dict[str, ProductMatch] = {}
     if hits:
         embeddings = {
@@ -99,6 +191,16 @@ def search_products_by_image_embedding(
                     reasons=["CLIP image similarity"],
                 )
     else:
+        embedding_count = db.scalar(
+            select(func.count())
+            .select_from(ImageEmbedding)
+            .where(
+                ImageEmbedding.model_name == model_name,
+                ImageEmbedding.dimensions == len(vector),
+            )
+        ) or 0
+        if embedding_count > 5000:
+            return []
         embeddings = db.scalars(
             select(ImageEmbedding).where(
                 ImageEmbedding.model_name == model_name,

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Activity, AlertTriangle, Database, FileSearch, FlaskConical, Search } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import StatusBadge from "../components/StatusBadge";
@@ -13,19 +13,34 @@ const tabs = [
   { key: "imports", label: "Imports", icon: Activity },
 ];
 
+const SEARCH_DEBOUNCE_MS = 300;
+
+function useDebouncedValue(value: string, delayMs = SEARCH_DEBOUNCE_MS) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedValue(value), delayMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [value, delayMs]);
+
+  return debouncedValue;
+}
+
 export default function AdminPage() {
   const { tab = "products" } = useParams();
   const [query, setQuery] = useState("");
   const activeTab = tabs.some((item) => item.key === tab) ? tab : null;
+  const debouncedQuery = useDebouncedValue(query);
+  const normalizedQuery = (query.trim() ? debouncedQuery : "").trim();
 
   const productsQuery = useQuery({
-    queryKey: ["admin-products", query],
-    queryFn: () => api.products(query),
+    queryKey: ["admin-products", normalizedQuery],
+    queryFn: () => api.products(normalizedQuery || undefined),
     enabled: activeTab === "products",
   });
   const ingredientsQuery = useQuery({
-    queryKey: ["admin-ingredients", query],
-    queryFn: () => api.ingredients(query),
+    queryKey: ["admin-ingredients", normalizedQuery],
+    queryFn: () => api.ingredients(normalizedQuery || undefined),
     enabled: activeTab === "ingredients",
   });
   const sourcesQuery = useQuery({

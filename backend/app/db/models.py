@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 
@@ -56,6 +56,10 @@ class Source(Base, TimestampMixin):
 
 class SourceRecord(Base):
     __tablename__ = "source_records"
+    __table_args__ = (
+        UniqueConstraint("source_code", "record_type", "external_id", name="uq_source_records_source_type_external"),
+        Index("ix_source_records_source_external", "source_code", "external_id"),
+    )
 
     source_record_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     source_code: Mapped[str] = mapped_column(ForeignKey("sources.source_code"))
@@ -72,6 +76,15 @@ class SourceRecord(Base):
 
 class SourceRecordFact(Base):
     __tablename__ = "source_record_facts"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_record_code",
+            "entity_kind",
+            "field_name",
+            "normalized_value",
+            name="uq_source_record_facts_record_field_value",
+        ),
+    )
 
     fact_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     source_record_code: Mapped[str] = mapped_column(ForeignKey("source_records.source_record_code"), index=True)
@@ -98,6 +111,10 @@ class SourceRecordFact(Base):
 
 class ProductSourceLink(Base):
     __tablename__ = "product_source_links"
+    __table_args__ = (
+        UniqueConstraint("product_code", "source_record_code", name="uq_product_source_links_product_record"),
+        UniqueConstraint("source_code", "external_id", name="uq_product_source_links_source_external"),
+    )
 
     product_source_link_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     product_code: Mapped[str] = mapped_column(ForeignKey("products.product_code"), index=True)
@@ -119,6 +136,9 @@ class ProductSourceLink(Base):
 
 class IngredientSourceLink(Base):
     __tablename__ = "ingredient_source_links"
+    __table_args__ = (
+        UniqueConstraint("ingredient_code", "source_record_code", name="uq_ingredient_source_links_ingredient_record"),
+    )
 
     ingredient_source_link_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     ingredient_code: Mapped[str] = mapped_column(ForeignKey("ingredients.ingredient_code"), index=True)
@@ -139,6 +159,9 @@ class IngredientSourceLink(Base):
 
 class CanonicalTerm(Base, TimestampMixin):
     __tablename__ = "canonical_terms"
+    __table_args__ = (
+        UniqueConstraint("term_type", "slug", name="uq_canonical_terms_type_slug"),
+    )
 
     term_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     term_type: Mapped[str] = mapped_column(String(80), index=True)
@@ -153,6 +176,9 @@ class CanonicalTerm(Base, TimestampMixin):
 
 class TermAlias(Base):
     __tablename__ = "term_aliases"
+    __table_args__ = (
+        UniqueConstraint("term_code", "source_code", "normalized_alias", name="uq_term_aliases_term_source_alias"),
+    )
 
     alias_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     term_code: Mapped[str] = mapped_column(ForeignKey("canonical_terms.term_code"), index=True)
@@ -166,6 +192,14 @@ class TermAlias(Base):
 
 class ProductTermLink(Base):
     __tablename__ = "product_term_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_code",
+            "term_code",
+            "source_record_code",
+            name="uq_product_term_links_product_term_record",
+        ),
+    )
 
     product_term_link_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     product_code: Mapped[str] = mapped_column(ForeignKey("products.product_code"), index=True)
@@ -184,6 +218,14 @@ class ProductTermLink(Base):
 
 class IngredientTermLink(Base):
     __tablename__ = "ingredient_term_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "ingredient_code",
+            "term_code",
+            "source_record_code",
+            name="uq_ingredient_term_links_ingredient_term_record",
+        ),
+    )
 
     ingredient_term_link_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     ingredient_code: Mapped[str] = mapped_column(ForeignKey("ingredients.ingredient_code"), index=True)
@@ -228,7 +270,7 @@ class Product(Base, TimestampMixin):
     barcode: Mapped[str | None] = mapped_column(String(80), unique=True)
     name: Mapped[str] = mapped_column(String(300))
     normalized_name: Mapped[str] = mapped_column(String(340), index=True)
-    brand_code: Mapped[str | None] = mapped_column(ForeignKey("brands.brand_code"))
+    brand_code: Mapped[str | None] = mapped_column(ForeignKey("brands.brand_code"), index=True)
     source_record_code: Mapped[str | None] = mapped_column(ForeignKey("source_records.source_record_code"))
     category_text: Mapped[str | None] = mapped_column(Text)
     ingredient_text: Mapped[str | None] = mapped_column(Text)
@@ -248,7 +290,7 @@ class ProductCategory(Base):
     __tablename__ = "product_categories"
 
     product_code: Mapped[str] = mapped_column(ForeignKey("products.product_code"), primary_key=True)
-    category_code: Mapped[str] = mapped_column(ForeignKey("categories.category_code"), primary_key=True)
+    category_code: Mapped[str] = mapped_column(ForeignKey("categories.category_code"), primary_key=True, index=True)
 
     product: Mapped[Product] = relationship(back_populates="categories")
     category: Mapped[Category] = relationship(back_populates="products")
@@ -258,7 +300,7 @@ class ProductImage(Base, TimestampMixin):
     __tablename__ = "product_images"
 
     image_code: Mapped[str] = mapped_column(String(32), primary_key=True)
-    product_code: Mapped[str] = mapped_column(ForeignKey("products.product_code"))
+    product_code: Mapped[str] = mapped_column(ForeignKey("products.product_code"), index=True)
     kind: Mapped[str] = mapped_column(String(40), default="front")
     url: Mapped[str | None] = mapped_column(String(800))
     local_path: Mapped[str | None] = mapped_column(String(800))
@@ -305,6 +347,9 @@ class IngredientSynonym(Base):
 
 class ProductIngredient(Base):
     __tablename__ = "product_ingredients"
+    __table_args__ = (
+        UniqueConstraint("product_code", "ingredient_code", name="uq_product_ingredients_product_ingredient"),
+    )
 
     product_ingredient_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     product_code: Mapped[str] = mapped_column(ForeignKey("products.product_code"), index=True)
@@ -407,6 +452,10 @@ class AdverseEventSignal(Base):
 
 class ImageEmbedding(Base):
     __tablename__ = "image_embeddings"
+    __table_args__ = (
+        Index("ix_image_embeddings_model_dimensions", "model_name", "dimensions"),
+        Index("ix_image_embeddings_product_model", "product_code", "model_name"),
+    )
 
     embedding_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     image_code: Mapped[str] = mapped_column(ForeignKey("product_images.image_code"))
@@ -415,3 +464,18 @@ class ImageEmbedding(Base):
     dimensions: Mapped[int] = mapped_column(Integer)
     vector: Mapped[list[float]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(UTCAwareDateTime(), default=utcnow)
+
+
+class SyncRun(Base):
+    __tablename__ = "sync_runs"
+
+    sync_run_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(40), default="running")
+    source_database: Mapped[str] = mapped_column(String(1000))
+    source_fingerprint: Mapped[str] = mapped_column(String(80), index=True)
+    tables: Mapped[list[str]] = mapped_column(JSON, default=list)
+    row_counts: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    failure_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(UTCAwareDateTime(), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCAwareDateTime())

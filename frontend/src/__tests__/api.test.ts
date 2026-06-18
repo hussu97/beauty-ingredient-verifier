@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api/client";
+import { api, REQUEST_TIMEOUT_MS, SCAN_TIMEOUT_MS } from "../api/client";
 import type { ClinicalProfile, ScanProgress } from "../api/types";
 
 const scanResponse = {
@@ -32,8 +32,11 @@ describe("api scan progress", () => {
       } = {};
       status = 200;
       responseText = JSON.stringify(scanResponse);
+      timeout = 0;
       onload?: () => void;
       onerror?: () => void;
+      ontimeout?: () => void;
+      onabort?: () => void;
 
       open = vi.fn();
 
@@ -57,6 +60,140 @@ describe("api scan progress", () => {
       { phase: "analyzing", percent: null, label: "Matching product" },
       { phase: "complete", percent: 100, label: "Scan complete" },
     ]);
+  });
+
+  it("uses a friendly timeout error when scan upload takes too long", async () => {
+    const createdRequests: Array<{ timeout: number }> = [];
+
+    class FakeXMLHttpRequest {
+      upload: {
+        onprogress?: (event: ProgressEvent) => void;
+        onload?: () => void;
+      } = {};
+      status = 0;
+      responseText = "";
+      timeout = 0;
+      onload?: () => void;
+      onerror?: () => void;
+      ontimeout?: () => void;
+      onabort?: () => void;
+
+      constructor() {
+        createdRequests.push(this);
+      }
+
+      open = vi.fn();
+      send = vi.fn(() => {
+        this.ontimeout?.();
+      });
+    }
+
+    vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
+    const file = new Blob(["image"], { type: "image/jpeg" }) as File;
+
+    await expect(api.scanWithProgress(file, vi.fn())).rejects.toMatchObject({
+      message: "The scan took too long. Please try a smaller image or try again.",
+    });
+    expect(createdRequests[0]?.timeout).toBe(SCAN_TIMEOUT_MS);
+  });
+
+  it("polls pending scans until the backend marks them complete", async () => {
+    vi.useFakeTimers();
+    const pendingScan = { ...scanResponse, scan_code: "scn_pending", status: "pending", matched_product_code: null };
+    const completedScan = { ...scanResponse, scan_code: "scn_pending", status: "completed" };
+    const fetchMock = vi.fn(async (url: string) => {
+      expect(url).toContain("/scans/scn_pending");
+      return new Response(JSON.stringify(completedScan), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    class FakeXMLHttpRequest {
+      upload: {
+        onprogress?: (event: ProgressEvent) => void;
+        onload?: () => void;
+      } = {};
+      status = 202;
+      responseText = JSON.stringify(pendingScan);
+      timeout = 0;
+      onload?: () => void;
+      onerror?: () => void;
+      ontimeout?: () => void;
+      onabort?: () => void;
+
+      open = vi.fn();
+      send = vi.fn(() => {
+        this.upload.onload?.();
+        this.onload?.();
+      });
+    }
+
+    vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
+    const events: ScanProgress[] = [];
+    const file = new Blob(["image"], { type: "image/jpeg" }) as File;
+    const promise = api.scanWithProgress(file, (event) => events.push(event));
+
+    await vi.advanceTimersByTimeAsync(800);
+    const scan = await promise;
+
+    expect(scan.status).toBe("completed");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(events[events.length - 1]).toEqual({ phase: "complete", percent: 100, label: "Scan complete" });
+  });
+});
+
+describe("api errors", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("parses FastAPI detail strings into friendly errors", async () => {
+    const fetchMock = vi.fn(async () => (
+      new Response(JSON.stringify({ detail: "Product not found" }), { status: 404 })
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.product("prd_missing")).rejects.toMatchObject({
+      message: "Product not found",
+      status: 404,
+    });
+  });
+
+  it("parses FastAPI validation issues without exposing raw JSON", async () => {
+    const fetchMock = vi.fn(async () => (
+      new Response(JSON.stringify({
+        detail: [
+          { loc: ["body", "file"], msg: "Field required", type: "missing" },
+          { loc: ["query", "limit"], msg: "Input should be greater than 0", type: "greater_than" },
+        ],
+      }), { status: 422 })
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.products()).rejects.toMatchObject({
+      message: "Field required (file); Input should be greater than 0 (limit)",
+      status: 422,
+    });
+  });
+
+  it("aborts fetch requests that exceed the request timeout", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(Object.assign(new Error("Aborted"), { name: "AbortError" }));
+        });
+      })
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const requestPromise = api.products();
+    const expectation = expect(requestPromise).rejects.toMatchObject({
+      message: "The request timed out. Please try again.",
+    });
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+
+    await expectation;
   });
 });
 

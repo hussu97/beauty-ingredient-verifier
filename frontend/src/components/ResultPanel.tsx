@@ -49,7 +49,9 @@ export default function ResultPanel({ scan, profile }: Props) {
       </div>
 
       {productQuery.isLoading && <div className="loading-line">Loading product details...</div>}
+      {productQuery.error && <div className="error-banner">{productQuery.error.message}</div>}
       {product && <ProductRiskPanel product={product} risk={risk} isEvaluating={riskQuery.isLoading && Boolean(matchedCode)} />}
+      {riskQuery.error && <div className="error-banner">{riskQuery.error.message}</div>}
 
       {otherCandidates.length > 0 && (
         <details className="alternate-matches">

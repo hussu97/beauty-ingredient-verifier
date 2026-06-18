@@ -10,6 +10,10 @@ from app.services.importers.open_beauty_facts import import_open_beauty_facts
 
 def init_db(settings: Settings) -> None:
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
+    if settings.env != "local" and settings.auto_create_tables:
+        raise RuntimeError("BPV_AUTO_CREATE_TABLES must be false outside local; run Alembic migrations instead.")
+    if settings.env != "local" and settings.bootstrap_demo_data:
+        raise RuntimeError("BPV_BOOTSTRAP_DEMO_DATA must be false outside local.")
     if settings.auto_create_tables:
         Base.metadata.create_all(bind=engine)
     if settings.bootstrap_demo_data:

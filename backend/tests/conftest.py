@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.models import Base
-from app.db.session import get_db
+from app.db.session import apply_sqlite_pragmas, get_db
 from app.main import create_app
 from app.services.enrichment import seed_reference_sources_and_rules
 from app.services.importers.open_beauty_facts import import_open_beauty_facts
@@ -23,6 +23,7 @@ def db_session() -> Generator[Session, None, None]:
         poolclass=StaticPool,
         future=True,
     )
+    apply_sqlite_pragmas(engine)
     Base.metadata.create_all(bind=engine)
     TestingSessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, future=True)
     with TestingSessionLocal() as db:

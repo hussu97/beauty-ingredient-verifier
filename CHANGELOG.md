@@ -3,6 +3,17 @@
 ## 2026-06-18
 
 ### Backend
+- Added production deployment implementation: API Docker image now installs only serving ML extras, local scraper/indexer pipeline images are split out, and production Compose runs FastAPI, pgvector Postgres, and Caddy on one VM.
+- Added `sync-local-to-prod` with dry-run/apply/validate-only modes, explicit dependency-ordered catalog/source/embedding table sync, runtime-table exclusions, sync run tracking, and pgvector refresh after embedding sync.
+- Added `sync_runs` plus a PostgreSQL `image_embedding_vectors` pgvector side index for production CLIP image matching from synced JSON embeddings.
+- Added audit-remediation integrity hardening: SQLite foreign keys are enabled for runtime/test engines, metadata now mirrors migration uniqueness boundaries, and production startup rejects local-only auto-create/demo-bootstrap flags.
+- Added an Alembic migration for source-record identity, lookup indexes, product-source-link deduplication, and high-volume search/indexing paths.
+- Changed scan uploads to enqueue pending scan jobs with `202 Accepted`; matching now runs in a backend background task and clients poll `GET /scans/{scan_code}`.
+- Reworked scan product search to generate indexed DB candidates before fuzzy scoring, removing the old first-500-products matching ceiling.
+- Optimized directory product ranking by using database-side coarse risk ordering and bounded profile-aware evaluation windows instead of loading and scoring every product in a group.
+- Added session-level importer caches for repeated brand/category/ingredient upserts and narrowed EWG brand-fusion candidate queries with eager-loaded ingredients.
+- Added structured logging and guardrails for barcode/OCR/embedding fallbacks, image downloads, sqlite-vec failures, and large vector fallback searches.
+- Added audit regression tests for FK pragmas, metadata uniqueness, source-record record-type identity, large-catalog search, failed scan persistence, and async scan enqueue behavior.
 - Removed legacy direct EWG ingestion paths (`import-ewg-skin-deep` file/API-style import and `scrape-ewg-skin-deep` Playwright/Selenium browser collection); EWG ingestion now uses the Wayback importer.
 - Added EWG/OBF category canonicalization and centralized EWG ingredient-INCI cross-validation so source fusion keeps EWG hazard scores on real Open Beauty Facts-compatible ingredient names.
 - Added conservative UPC/EAN/GTIN extraction from archived EWG page metadata or visible labels when present, while preserving barcode-less brand/name/category/ingredient/image matching as the normal EWG path.
@@ -27,10 +38,13 @@
 - Started the local full pending-image embedding run in a detached `screen` session named `bpv-image-index`.
 
 ### Docs
+- Reworked production documentation around Vercel frontend, single-VM GCP backend, local canonical scraping/indexing, GitHub Secrets deploy, local-to-prod sync, and backup/restore operations.
 - Documented EWG Skin Deep Wayback import operations, source-fusion provenance, environment variables, and admin audit surfaces.
 - Documented source-backed product corrections, resumable image indexing operations, and clarified that source-confidence heuristics are not shown in the scanner UI.
 
 ### Frontend
+- Added API request timeouts, friendly FastAPI error parsing, scan polling for pending jobs, and XHR upload timeout/network handling.
+- Debounced admin and directory searches, stopped directory search from auto-ranking arbitrary first results, and surfaced product/risk query errors on scanner and PDP views.
 - Added product source chips, normalized attribute chips, and source-conflict rows to product source notes.
 - Added canonical term and source-conflict audit sections to the admin sources tab.
 - Changed directory brand/category search to query the backend instead of filtering only the initially loaded high-volume groups.

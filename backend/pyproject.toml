@@ -32,6 +32,12 @@ data = [
   "beautifulsoup4>=4.12",
   "pyarrow>=16.0"
 ]
+serve-ml = [
+  "numpy>=1.26",
+  "opencv-python-headless>=4.10",
+  "sentence-transformers>=3.0",
+  "zxing-cpp>=2.2"
+]
 ml = [
   "numpy>=1.26",
   "opencv-python-headless>=4.10",
@@ -55,6 +61,7 @@ enrich-ingredients = "app.cli:enrich_ingredients_entry"
 apply-product-corrections = "app.cli:apply_product_corrections_entry"
 index-images = "app.cli:index_images_entry"
 refresh-risk-signals = "app.cli:refresh_risk_signals_entry"
+sync-local-to-prod = "app.cli:sync_local_to_prod_entry"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${BPV_POSTGRES_DB}
+      POSTGRES_USER: ${BPV_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${BPV_POSTGRES_PASSWORD}
+    volumes:
+      - ${BPV_POSTGRES_DATA_DIR:-/opt/bpv/postgres-data}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${BPV_POSTGRES_USER} -d ${BPV_POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: ${BPV_API_IMAGE}
+    restart: unless-stopped
+    environment:
+      BPV_APP_NAME: ${BPV_APP_NAME:-Beauty Product Verifier}
+      BPV_ENV: production
+      BPV_DATABASE_URL: ${BPV_DATABASE_URL}
+      BPV_CORS_ORIGINS: ${BPV_CORS_ORIGINS}
+      BPV_OPEN_BEAUTY_FACTS_USER_AGENT: ${BPV_OPEN_BEAUTY_FACTS_USER_AGENT}
+      BPV_ENABLE_LIVE_OPEN_BEAUTY_FACTS_LOOKUP: ${BPV_ENABLE_LIVE_OPEN_BEAUTY_FACTS_LOOKUP:-true}
+      BPV_AUTO_CREATE_TABLES: "false"
+      BPV_BOOTSTRAP_DEMO_DATA: "false"
+      BPV_ENABLE_OPTIONAL_ML: "true"
+      BPV_ENABLE_SQLITE_VEC: "false"
+      BPV_OCR_LANGUAGE: ${BPV_OCR_LANGUAGE:-en}
+      BPV_IMAGE_EMBEDDING_MODEL: ${BPV_IMAGE_EMBEDDING_MODEL:-sentence-transformers/clip-ViT-B-32}
+      BPV_IMAGE_DOWNLOAD_TIMEOUT_SECONDS: ${BPV_IMAGE_DOWNLOAD_TIMEOUT_SECONDS:-20}
+      BPV_EWG_ATTRIBUTION_TEXT: ${BPV_EWG_ATTRIBUTION_TEXT:-Contains information from EWG Skin Deep.}
+      BPV_EWG_USER_AGENT: ${BPV_EWG_USER_AGENT}
+      BPV_STORAGE_DIR: /app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - api-storage:/app/storage
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      API_DOMAIN: ${API_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  api-storage:
+  caddy-data:
+  caddy-config:

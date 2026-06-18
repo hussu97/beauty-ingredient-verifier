@@ -17,7 +17,7 @@ def _engine_args(database_url: str) -> dict:
     return {}
 
 
-def _apply_sqlite_pragmas(engine) -> None:
+def apply_sqlite_pragmas(engine) -> None:
     """Tune SQLite for write-heavy bulk imports and concurrent reads.
 
     WAL lets readers proceed while a writer is active (so monitoring queries no
@@ -30,6 +30,7 @@ def _apply_sqlite_pragmas(engine) -> None:
     @event.listens_for(engine, "connect")
     def _set_pragmas(dbapi_connection, _record):  # pragma: no cover - connection hook
         cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA busy_timeout=30000")
@@ -41,7 +42,7 @@ def _apply_sqlite_pragmas(engine) -> None:
 settings = get_settings()
 engine = create_engine(settings.database_url, future=True, **_engine_args(settings.database_url))
 if settings.database_url.startswith("sqlite"):
-    _apply_sqlite_pragmas(engine)
+    apply_sqlite_pragmas(engine)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, future=True)
 
 
@@ -52,6 +53,7 @@ def make_test_sessionmaker() -> sessionmaker[Session]:
         poolclass=StaticPool,
         future=True,
     )
+    apply_sqlite_pragmas(test_engine)
     return sessionmaker(bind=test_engine, autocommit=False, autoflush=False, future=True)
 
 

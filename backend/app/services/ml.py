@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 
 BARCODE_RE = re.compile(r"(\d{8,14})")
@@ -37,6 +40,7 @@ def extract_barcode(image_path: Path, *, enabled: bool) -> str | None:
         import cv2
         import zxingcpp
     except ImportError:
+        logger.debug("Barcode ML dependencies are not installed; using filename fallback")
         return barcode_from_filename(image_path)
 
     try:
@@ -47,6 +51,7 @@ def extract_barcode(image_path: Path, *, enabled: bool) -> str | None:
             if value:
                 return value
     except Exception:
+        logger.exception("Barcode extraction failed for %s; using filename fallback", image_path)
         return barcode_from_filename(image_path)
     return barcode_from_filename(image_path)
 
@@ -97,6 +102,7 @@ def extract_ocr_text(image_path: Path, *, enabled: bool, language: str) -> str:
     try:
         ocr = _paddle_ocr(language)
     except Exception:
+        logger.exception("PaddleOCR initialization failed for language %s; using filename fallback", language)
         return fallback
 
     try:
@@ -108,6 +114,7 @@ def extract_ocr_text(image_path: Path, *, enabled: bool, language: str) -> str:
         else:
             result = ocr.predict(str(image_path))
     except Exception:
+        logger.exception("OCR extraction failed for %s; using filename fallback", image_path)
         return fallback
 
     texts = []
@@ -161,6 +168,7 @@ def embed_image(image_path: Path, *, enabled: bool, model_name: str) -> ImageVec
     try:
         model = _sentence_transformer(model_name)
     except Exception:
+        logger.exception("Image embedding model %s failed to load", model_name)
         return None
 
     try:
@@ -177,6 +185,7 @@ def embed_image(image_path: Path, *, enabled: bool, model_name: str) -> ImageVec
                 encoded = model.encode(rgb_image)
         vector = normalize_vector(_as_float_list(encoded))
     except Exception:
+        logger.exception("Image embedding failed for %s", image_path)
         return None
 
     return ImageVector(model_name=model_name, vector=vector)

@@ -24,23 +24,29 @@ def list_sources(db: Session = Depends(get_db)) -> list[Source]:
 
 @router.get("/terms", response_model=list[SourceTermSummaryOut])
 def list_source_terms(limit: int = 120, db: Session = Depends(get_db)) -> list[SourceTermSummaryOut]:
-    product_counts = dict(
-        db.execute(
-            select(ProductTermLink.term_code, func.count(ProductTermLink.product_code))
-            .group_by(ProductTermLink.term_code)
-        ).all()
-    )
-    ingredient_counts = dict(
-        db.execute(
-            select(IngredientTermLink.term_code, func.count(IngredientTermLink.ingredient_code))
-            .group_by(IngredientTermLink.term_code)
-        ).all()
-    )
     terms = db.scalars(
         select(CanonicalTerm)
         .order_by(CanonicalTerm.term_type, CanonicalTerm.label)
         .limit(limit)
     ).all()
+    term_codes = [term.term_code for term in terms]
+    product_counts = {}
+    ingredient_counts = {}
+    if term_codes:
+        product_counts = dict(
+            db.execute(
+                select(ProductTermLink.term_code, func.count(ProductTermLink.product_code))
+                .where(ProductTermLink.term_code.in_(term_codes))
+                .group_by(ProductTermLink.term_code)
+            ).all()
+        )
+        ingredient_counts = dict(
+            db.execute(
+                select(IngredientTermLink.term_code, func.count(IngredientTermLink.ingredient_code))
+                .where(IngredientTermLink.term_code.in_(term_codes))
+                .group_by(IngredientTermLink.term_code)
+            ).all()
+        )
     return [
         SourceTermSummaryOut(
             term_code=term.term_code,

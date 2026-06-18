@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,7 @@ def load_sqlite_vec(db: Session) -> bool:
     try:
         import sqlite_vec
     except ImportError:
+        logger.debug("sqlite-vec is not installed")
         return False
 
     connection = _dbapi_connection(db)
@@ -36,6 +41,7 @@ def load_sqlite_vec(db: Session) -> bool:
         connection.enable_load_extension(False)
         connection.execute("select vec_version()").fetchone()
     except Exception:
+        logger.exception("Failed to load sqlite-vec extension")
         try:
             connection.enable_load_extension(False)
         except Exception:
@@ -110,6 +116,7 @@ def upsert_sqlite_vec_embedding(
             (rowid, vector_json),
         )
     except Exception:
+        logger.exception("Failed to upsert sqlite-vec embedding %s", embedding_code)
         return False
     return True
 
@@ -142,5 +149,42 @@ def query_sqlite_vec(
             (vector_json, model_name, limit),
         ).fetchall()
     except Exception:
+        logger.exception("sqlite-vec query failed for model %s", model_name)
+        return []
+    return [VectorHit(embedding_code=str(row[0]), distance=float(row[1])) for row in rows]
+
+
+def query_postgres_vec(
+    db: Session,
+    *,
+    model_name: str,
+    vector: list[float],
+    limit: int,
+) -> list[VectorHit]:
+    if not vector or db.bind is None or db.bind.dialect.name != "postgresql":
+        return []
+
+    vector_json = json.dumps([float(item) for item in vector])
+    try:
+        rows = db.execute(
+            sa.text(
+                """
+                select embedding_code, embedding <=> cast(:vector as vector) as distance
+                from image_embedding_vectors
+                where model_name = :model_name
+                  and dimensions = :dimensions
+                order by embedding <=> cast(:vector as vector)
+                limit :limit
+                """
+            ),
+            {
+                "vector": vector_json,
+                "model_name": model_name,
+                "dimensions": len(vector),
+                "limit": limit,
+            },
+        ).all()
+    except Exception:
+        logger.exception("PostgreSQL pgvector query failed for model %s", model_name)
         return []
     return [VectorHit(embedding_code=str(row[0]), distance=float(row[1])) for row in rows]

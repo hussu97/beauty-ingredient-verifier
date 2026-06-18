@@ -12,6 +12,18 @@ import { severityClass, severityLabel } from "../lib/severity";
 
 type GroupKind = "brand" | "category";
 const PAGE_SIZE = 12;
+const SEARCH_DEBOUNCE_MS = 300;
+
+function useDebouncedValue(value: string, delayMs = SEARCH_DEBOUNCE_MS) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedValue(value), delayMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [value, delayMs]);
+
+  return debouncedValue;
+}
 
 function ProductRiskBadge({ severity }: { severity: string }) {
   const normalized = severity.toLowerCase();
@@ -32,14 +44,15 @@ export default function DirectoryPage() {
   const [page, setPage] = useState(1);
   const [profile, setProfile] = useState<ClinicalProfile>(() => loadProfile());
   const profileKey = JSON.stringify(profile);
-  const normalizedGroupSearch = groupSearch.trim();
+  const debouncedGroupSearch = useDebouncedValue(groupSearch);
+  const normalizedGroupSearch = (groupSearch.trim() ? debouncedGroupSearch : "").trim();
 
   const groupsQuery = useQuery({
     queryKey: ["directory-groups", kind, normalizedGroupSearch],
     queryFn: () => api.directoryGroups(kind, normalizedGroupSearch || undefined),
   });
   const groups = useMemo(() => groupsQuery.data ?? [], [groupsQuery.data]);
-  const selectedGroup = groups.find((group) => group.code === selectedCode) ?? groups[0] ?? null;
+  const selectedGroup = groups.find((group) => group.code === selectedCode) ?? null;
 
   useEffect(() => {
     setSelectedCode(null);
@@ -177,7 +190,9 @@ export default function DirectoryPage() {
             {!productsQuery.isLoading && products.length === 0 && (
               <div className="empty-state">
                 <Boxes size={22} />
-                No products found for this group yet.
+                {selectedGroup
+                  ? "No products found for this group yet."
+                  : `Select a ${kind === "brand" ? "brand" : "category"} to rank products.`}
               </div>
             )}
           </div>

@@ -4,7 +4,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import Product, RiskEvaluation, RiskRule, SourceRecord
 from app.services.codes import make_code
@@ -123,7 +123,9 @@ def evaluate_loaded_product_risk(
 ) -> dict[str, Any]:
     ingredient_codes = [link.ingredient_code for link in product.ingredients]
     rules = db.scalars(
-        select(RiskRule).where(RiskRule.ingredient_code.in_(ingredient_codes), RiskRule.active.is_(True))
+        select(RiskRule)
+        .where(RiskRule.ingredient_code.in_(ingredient_codes), RiskRule.active.is_(True))
+        .options(selectinload(RiskRule.ingredient))
     ).all()
     matched: list[RiskRule] = [rule for rule in rules if _rule_applies(rule, product, profile)]
 
@@ -144,19 +146,19 @@ def evaluate_loaded_product_risk(
         record = source_records.get(rule.source_record_code)
         matched_ingredients.append(
             {
-            "ingredient_code": rule.ingredient_code,
-            "ingredient_name": rule.ingredient.canonical_name,
-            "rule_code": rule.risk_rule_code,
-            "title": rule.title,
-            "summary": rule.summary,
-            "severity": rule.severity,
-            "severity_score": rule.severity_score,
-            "side_effects": rule.side_effects,
-            "confidence_score": rule.confidence_score,
-            "evidence_kind": rule.evidence_kind,
-            "source_record_code": rule.source_record_code,
-            "source_url": record.source_url if record else None,
-        }
+                "ingredient_code": rule.ingredient_code,
+                "ingredient_name": rule.ingredient.canonical_name,
+                "rule_code": rule.risk_rule_code,
+                "title": rule.title,
+                "summary": rule.summary,
+                "severity": rule.severity,
+                "severity_score": rule.severity_score,
+                "side_effects": rule.side_effects,
+                "confidence_score": rule.confidence_score,
+                "evidence_kind": rule.evidence_kind,
+                "source_record_code": rule.source_record_code,
+                "source_url": record.source_url if record else None,
+            }
         )
     explanation = (
         "No source-backed risk rules matched this profile. Unknown does not mean risk-free."

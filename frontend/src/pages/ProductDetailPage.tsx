@@ -24,6 +24,13 @@ export default function ProductDetailPage() {
   });
 
   if (productQuery.isLoading) return <div className="page-stack">Loading product...</div>;
+  if (productQuery.error) {
+    return (
+      <div className="page-stack">
+        <div className="error-banner">{productQuery.error.message}</div>
+      </div>
+    );
+  }
   if (!productQuery.data) return <div className="page-stack">Product not found.</div>;
 
   return (
