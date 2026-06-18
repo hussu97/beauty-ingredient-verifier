@@ -51,6 +51,8 @@ jobs:
           context: backend
           push: true
           tags: ${{ env.BPV_API_IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Install SSH key
         run: |

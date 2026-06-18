@@ -42,6 +42,8 @@ The VM runs `docker-compose.prod.yml`:
 - `postgres`: `pgvector/pgvector:pg16` with data on the mounted disk.
 - `caddy`: TLS reverse proxy for `API_DOMAIN`.
 
+The API Dockerfile preinstalls CPU-only Torch before `sentence-transformers` so production CLIP serving does not pull CUDA/NVIDIA libraries onto the small VM boot disk.
+
 Production API settings are enforced through `/opt/bpv/.env`:
 
 ```text
