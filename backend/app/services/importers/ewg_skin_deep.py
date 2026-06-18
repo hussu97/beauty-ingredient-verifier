@@ -685,7 +685,9 @@ def import_ewg_product_payload(
     )
     brand = _upsert_brand(db, brand_name, record.source_record_code)
     rows = _ingredient_rows(payload)
-    ingredient_names = [name for row in rows if (name := _ingredient_name(row))]
+    # NB: keep a distinct loop variable here — a walrus that reused ``name`` would
+    # leak into this scope and clobber the product name below with the last ingredient.
+    ingredient_names = [ing_name for row in rows if (ing_name := _ingredient_name(row))]
     category_values = _category_values(payload)
     ingredient_text = _first_ingredient_text(payload, rows)
     match = _find_matching_product(

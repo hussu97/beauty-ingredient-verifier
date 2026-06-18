@@ -1,11 +1,17 @@
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.db.models import Ingredient, Product, ProductIngredient, RiskRule, SourceRecord
 from app.services.importers.ewg_public_scraper import (
     PageSnapshot,
+    _parse_proxy,
     category_links_from_snapshot,
     is_challenge_snapshot,
     parse_ingredient_snapshot,
     parse_product_snapshot,
     product_links_from_snapshot,
 )
+from app.services.importers.ewg_skin_deep import import_ewg_product_payload
 
 
 def test_parse_product_snapshot_extracts_scores_ingredients_and_packaging():
@@ -133,3 +139,89 @@ def test_link_discovery_and_challenge_detection():
             headings=[],
         )
     )
+
+
+def test_parse_proxy_variants():
+    assert _parse_proxy(None) is None
+    assert _parse_proxy("http://u:p@1.2.3.4:8080") == {
+        "server": "http://1.2.3.4:8080",
+        "username": "u",
+        "password": "p",
+    }
+    assert _parse_proxy("socks5://host:1080") == {"server": "socks5://host:1080"}
+
+
+def test_scrape_to_db_pipeline_end_to_end(db_session: Session):
+    """Snapshot -> parse -> import -> DB, the path every scraper engine feeds.
+
+    Exercises the data flow without a live fetch (which is gated by the target's
+    Cloudflare challenge), proving products, ingredients, links and EWG-derived
+    risk rules land in the database.
+    """
+    snapshot = PageSnapshot(
+        url="https://www.ewg.org/skindeep/products/9202226-Test_Product/",
+        title="EWG Skin Deep® | Example Brand Daily Cream Rating",
+        h1="Example Brand Daily Cream",
+        text="""
+        BRAND
+        Example Brand
+        CATEGORY
+        Facial Moisturizer/Treatment
+        DATA LAST UPDATED
+        February 2026
+        Data Availability: Fair
+        WATER
+        Data Availability: Robust
+        FUNCTION(S) solvent
+        CONCERNS
+        CAPRYLOHYDROXAMIC ACID
+        Data Availability: Limited
+        FUNCTION(S) preservative, chelating agent
+        CONCERNS • Allergies/immunotoxicity (moderate)
+        • Use restrictions (low)
+        LEARN MORE ABOUT THIS INGREDIENT
+        Ingredients from packaging:
+        WATER • CAPRYLOHYDROXAMIC ACID
+        Product's animal testing policies
+        Unknown
+        Understanding scores
+        """,
+        links=[
+            {
+                "href": "https://www.ewg.org/skindeep/ingredients/700000-CAPRYLOHYDROXAMIC_ACID/",
+                "text": "LEARN MORE ABOUT THIS INGREDIENT",
+            }
+        ],
+        images=[
+            {"src": "https://example.com/product.jpg", "alt": "Product score: 02"},
+            {"src": "https://example.com/ingredient-water.png", "alt": "Ingredient score: 01"},
+            {"src": "https://example.com/ingredient-cap.png", "alt": "Ingredient score: 03"},
+        ],
+        headings=["Example Brand Daily Cream"],
+    )
+
+    payload = parse_product_snapshot(snapshot)
+    product = import_ewg_product_payload(db_session, payload, dry_run=False)
+    db_session.commit()
+
+    assert product is not None
+    assert product.name == "Example Brand Daily Cream"
+
+    stored = db_session.scalar(select(Product).where(Product.product_code == product.product_code))
+    assert stored is not None
+
+    ingredient_names = {
+        link.ingredient.canonical_name.lower()
+        for link in db_session.scalars(select(ProductIngredient)).all()
+        if link.ingredient
+    }
+    assert any("caprylohydroxamic" in name for name in ingredient_names)
+    assert db_session.scalar(select(SourceRecord).where(SourceRecord.record_type == "product")) is not None
+
+    # The moderate allergy concern should have seeded an EWG-sourced risk rule.
+    rules = db_session.scalars(
+        select(RiskRule).where(RiskRule.evidence_kind == "ewg-skin-deep-concern")
+    ).all()
+    assert rules
+    assert any("allerg" in (rule.title or "").lower() for rule in rules)
+    assert db_session.scalar(select(Ingredient)) is not None

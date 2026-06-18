@@ -159,6 +159,15 @@ def scrape_ewg_skin_deep_command(
             "default IP's reputation is flagged."
         ),
     ),
+    engine: str = typer.Option(
+        "auto",
+        "--engine",
+        help=(
+            "Browser engine: 'auto' (patchright/playwright, fast, parallel) or "
+            "'seleniumbase' (UC Mode with OS-level Turnstile checkbox clicks; headed, "
+            "sequential, best for interactive Cloudflare challenges)."
+        ),
+    ),
     delay_seconds: float = typer.Option(2.0, "--delay-seconds", min=0.5),
     browser_workers: int = typer.Option(
         1,
@@ -204,6 +213,7 @@ def scrape_ewg_skin_deep_command(
                 challenge_wait_seconds=challenge_wait_seconds,
                 user_agent=user_agent or DEFAULT_USER_AGENT,
                 proxy_url=proxy,
+                engine=engine,
             )
         except EwgScrapeBlocked as exc:
             db.rollback()

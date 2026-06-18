@@ -580,9 +580,12 @@ async def _collect_ewg_payloads(
         # explicit that adding the usual stealth args, a spoofed user agent, or JS
         # init scripts REDUCES stealth, so we pass a minimal config and let it use a
         # real Chrome profile. channel="chrome" is preferred; fall back to chromium.
+        # Use Playwright's default fixed 1280x720 viewport (not no_viewport): the
+        # interactive Turnstile checkbox renders at predictable coordinates and the
+        # challenge scores a consistent window better than a variable-size one.
         launch_kwargs: dict[str, Any] = dict(
             headless=headless,
-            no_viewport=True,
+            viewport={"width": 1280, "height": 720},
             locale=locale,
             timezone_id=timezone_id,
         )
@@ -853,6 +856,175 @@ async def _collect_ewg_payloads(
     return product_payloads, ingredient_payloads, counts
 
 
+def _seleniumbase_snapshot(sb) -> PageSnapshot:
+    data = sb.execute_script("return (" + SNAPSHOT_SCRIPT + ")();") or {}
+    return PageSnapshot(
+        url=data.get("url", ""),
+        title=data.get("title", ""),
+        h1=data.get("h1"),
+        text=data.get("text", "") or "",
+        links=data.get("links", []) or [],
+        images=data.get("images", []) or [],
+        headings=data.get("headings", []) or [],
+    )
+
+
+def _collect_ewg_payloads_seleniumbase(
+    *,
+    urls: list[str],
+    user_data_dir: Path,
+    max_products: int,
+    max_pages: int,
+    max_ingredient_pages: int,
+    scrape_ingredient_pages: bool,
+    headless: bool,
+    delay_seconds: float,
+    include_category_links: bool,
+    challenge_wait_seconds: int,
+    proxy_url: str | None,
+    locale: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
+    """Sequential crawler driven by SeleniumBase UC Mode.
+
+    UC Mode disconnects the WebDriver/CDP channel during the Cloudflare challenge
+    and clicks the Turnstile checkbox at the OS level via pyautogui, which advances
+    interactive challenges that a CDP-attached browser (patchright) cannot. Requires
+    a headed session on a real (or virtual) display.
+    """
+    try:
+        from seleniumbase import SB
+    except ImportError as exc:
+        raise RuntimeError(
+            "SeleniumBase is required for the 'seleniumbase' engine. Install backend[data] "
+            "(which includes seleniumbase and pyautogui)."
+        ) from exc
+
+    import time
+
+    counts = _empty_counts()
+    product_payloads: list[dict[str, Any]] = []
+    ingredient_payloads: list[dict[str, Any]] = []
+    product_urls: list[str] = []
+    seen_product_urls: set[str] = set()
+    ingredient_urls: list[str] = []
+    seen_ingredient_urls: set[str] = set()
+
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+    sb_kwargs: dict[str, Any] = dict(
+        uc=True,
+        headless=headless,
+        locale_code=locale.split("-")[0],
+        user_data_dir=str(user_data_dir),
+    )
+    if proxy_url:
+        # SeleniumBase expects "host:port" or "user:pass@host:port" (no scheme).
+        sb_kwargs["proxy"] = re.sub(r"^\w+://", "", proxy_url)
+
+    def visit(sb, url: str) -> PageSnapshot:
+        sb.uc_open_with_reconnect(url, reconnect_time=4)
+        snapshot = _seleniumbase_snapshot(sb)
+        if not is_challenge_snapshot(snapshot):
+            return _post_clear(sb, snapshot)
+        deadline = time.time() + challenge_wait_seconds
+        while time.time() < deadline:
+            try:
+                sb.uc_gui_click_captcha()
+            except Exception:
+                pass
+            time.sleep(random.uniform(3.0, 4.5))
+            snapshot = _seleniumbase_snapshot(sb)
+            if not is_challenge_snapshot(snapshot):
+                return _post_clear(sb, snapshot)
+        counts["challenge_pages"] += 1
+        raise EwgScrapeBlocked(
+            "EWG Turnstile did not clear within "
+            f"{challenge_wait_seconds}s under the seleniumbase engine. The OS-level "
+            "checkbox click advanced the challenge but server-side verification was "
+            "refused — almost always an egress IP reputation block. Try a cleaner IP "
+            "(--proxy) or increase --challenge-wait-seconds."
+        )
+
+    def _post_clear(sb, snapshot: PageSnapshot) -> PageSnapshot:
+        # Scroll to load lazy images/ingredient blocks, then re-snapshot.
+        try:
+            for fraction in (0.3, 0.6, 0.9, 1.0):
+                sb.execute_script(
+                    "window.scrollTo(0, document.body.scrollHeight * arguments[0]);",
+                    fraction,
+                )
+                time.sleep(random.uniform(0.3, 0.7))
+        except Exception:
+            pass
+        return _seleniumbase_snapshot(sb)
+
+    with SB(**sb_kwargs) as sb:
+        # ---- Listing/category pages → collect product links ----
+        scheduled: set[str] = set()
+        queue: list[str] = []
+        for raw_url in urls:
+            if len(scheduled) >= max_pages:
+                break
+            url = urljoin(EWG_BASE_URL, raw_url)
+            if url not in scheduled:
+                scheduled.add(url)
+                queue.append(url)
+
+        while queue and len(product_urls) < max_products:
+            url = queue.pop(0)
+            snapshot = visit(sb, url)
+            counts["pages_seen"] += 1
+            if CATEGORY_PATH_RE.search(url):
+                counts["category_pages"] += 1
+            for product_url in product_links_from_snapshot(snapshot):
+                if len(product_urls) >= max_products:
+                    break
+                if product_url not in seen_product_urls:
+                    seen_product_urls.add(product_url)
+                    product_urls.append(product_url)
+            candidates = next_links_from_snapshot(snapshot)
+            if include_category_links:
+                candidates.extend(category_links_from_snapshot(snapshot))
+            for candidate in candidates:
+                target = urljoin(EWG_BASE_URL, candidate)
+                if len(scheduled) >= max_pages:
+                    break
+                if target not in scheduled:
+                    scheduled.add(target)
+                    queue.append(target)
+            time.sleep(delay_seconds * random.uniform(0.7, 1.6))
+
+        # ---- Product pages ----
+        for url in product_urls[:max_products]:
+            snapshot = visit(sb, url)
+            payload = parse_product_snapshot(snapshot)
+            if not payload.get("product_name") or payload.get("hazard_score") is None:
+                retry = parse_product_snapshot(_post_clear(sb, snapshot))
+                if retry.get("product_name"):
+                    payload = retry
+            product_payloads.append(payload)
+            counts["product_pages"] += 1
+            for row in payload.get("ingredients", []):
+                ingredient_url = row.get("ingredient_url")
+                if (
+                    ingredient_url
+                    and ingredient_url not in seen_ingredient_urls
+                    and len(ingredient_urls) < max_ingredient_pages
+                ):
+                    seen_ingredient_urls.add(ingredient_url)
+                    ingredient_urls.append(ingredient_url)
+            time.sleep(delay_seconds * random.uniform(0.7, 1.6))
+
+        # ---- Ingredient pages ----
+        if scrape_ingredient_pages and max_ingredient_pages > 0:
+            for url in ingredient_urls[:max_ingredient_pages]:
+                snapshot = visit(sb, url)
+                ingredient_payloads.append(parse_ingredient_snapshot(snapshot))
+                counts["ingredient_pages"] += 1
+                time.sleep(delay_seconds * random.uniform(0.7, 1.6))
+
+    return product_payloads, ingredient_payloads, counts
+
+
 def scrape_ewg_skin_deep(
     db: Session,
     *,
@@ -874,9 +1046,10 @@ def scrape_ewg_skin_deep(
     locale: str = DEFAULT_LOCALE,
     timezone_id: str = DEFAULT_TIMEZONE,
     proxy_url: str | None = None,
+    engine: str = "auto",
 ) -> dict[str, int]:
-    product_payloads, ingredient_payloads, counts = asyncio.run(
-        _collect_ewg_payloads(
+    if engine == "seleniumbase":
+        product_payloads, ingredient_payloads, counts = _collect_ewg_payloads_seleniumbase(
             urls=urls,
             user_data_dir=user_data_dir,
             max_products=max_products,
@@ -885,15 +1058,31 @@ def scrape_ewg_skin_deep(
             scrape_ingredient_pages=scrape_ingredient_pages,
             headless=headless,
             delay_seconds=delay_seconds,
-            browser_workers=browser_workers,
             include_category_links=include_category_links,
             challenge_wait_seconds=challenge_wait_seconds,
-            user_agent=user_agent,
-            locale=locale,
-            timezone_id=timezone_id,
             proxy_url=proxy_url,
+            locale=locale,
         )
-    )
+    else:
+        product_payloads, ingredient_payloads, counts = asyncio.run(
+            _collect_ewg_payloads(
+                urls=urls,
+                user_data_dir=user_data_dir,
+                max_products=max_products,
+                max_pages=max_pages,
+                max_ingredient_pages=max_ingredient_pages,
+                scrape_ingredient_pages=scrape_ingredient_pages,
+                headless=headless,
+                delay_seconds=delay_seconds,
+                browser_workers=browser_workers,
+                include_category_links=include_category_links,
+                challenge_wait_seconds=challenge_wait_seconds,
+                user_agent=user_agent,
+                locale=locale,
+                timezone_id=timezone_id,
+                proxy_url=proxy_url,
+            )
+        )
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("a", encoding="utf-8") as output_handle:

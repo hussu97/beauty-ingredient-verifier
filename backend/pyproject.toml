@@ -31,7 +31,9 @@ dev = [
 data = [
   "patchright>=1.48",
   "playwright>=1.48",
-  "pyarrow>=16.0"
+  "pyarrow>=16.0",
+  "pyautogui>=0.9.54",
+  "seleniumbase>=4.50"
 ]
 ml = [
   "numpy>=1.26",
