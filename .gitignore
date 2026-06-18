@@ -18,6 +18,8 @@ coverage/
 backend/storage/
 backend/*.egg-info/
 *.egg-info/
+data/raw/
+data/processed/
 .playwright-cli/
 *.log
 *.pid
