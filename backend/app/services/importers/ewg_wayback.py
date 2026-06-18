@@ -19,21 +19,25 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterator
 from urllib.parse import urljoin
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.db.models import SourceRecord
 from app.services.importers.ewg_public_scraper import (
     INGREDIENT_PATH_RE,
     PRODUCT_PATH_RE,
     PageSnapshot,
+    _external_id_from_url,
     is_challenge_snapshot,
     parse_ingredient_snapshot,
     parse_product_snapshot,
 )
 from app.services.importers.ewg_skin_deep import (
+    EWG_SOURCE_CODE,
     ensure_ewg_source,
     import_ewg_ingredient_payload,
     import_ewg_product_payload,
@@ -41,6 +45,8 @@ from app.services.importers.ewg_skin_deep import (
 
 CDX_API = "http://web.archive.org/cdx/search/cdx"
 WAYBACK_RAW = "https://web.archive.org/web/{timestamp}id_/{url}"
+# A far-future timestamp makes Wayback redirect to the most recent capture.
+LATEST_TIMESTAMP = "29991231235959"
 
 # Rewrites a Wayback URL prefix back to the original target URL. Handles both the
 # absolute (https://web.archive.org/web/...) and relative (/web/...) forms, plus
@@ -52,6 +58,15 @@ _WB_PREFIX_RE = re.compile(
 _JUNK_SUFFIXES = (".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".json")
 _PRODUCT_ID_RE = re.compile(r"/skindeep/products/\d+[-/]")
 _INGREDIENT_ID_RE = re.compile(r"/skindeep/ingredients/\d+[-/]")
+
+# Titles served when EWG returned its generic landing/listing instead of a page
+# (common for removed products archived as a 200 redirect to the database home).
+_GENERIC_TITLES = {
+    "ewg skin deep® cosmetics database",
+    "ewg skin deep cosmetics database",
+    "skin deep® cosmetics database",
+    "wayback machine",
+}
 
 
 def _deprefix(href: str | None) -> str:
@@ -65,48 +80,69 @@ def _looks_like_junk(url: str) -> bool:
     return any(lowered.rstrip("/").endswith(suffix) for suffix in _JUNK_SUFFIXES)
 
 
-def cdx_capture_urls(
+def iter_cdx_originals(
     client: httpx.Client,
     *,
     url_pattern: str,
     id_regex: re.Pattern[str],
-    limit: int,
     from_date: str | None = None,
-) -> list[tuple[str, str]]:
-    """Return ``(original_url, timestamp)`` for archived EWG pages.
+    page_size: int = 20000,
+) -> Iterator[str]:
+    """Yield distinct archived EWG page URLs, paginating the CDX index.
 
-    Uses ``collapse=urlkey`` so each distinct page yields a single capture, and
-    filters to successful HTML responses that look like real product/ingredient
-    pages (not thumbnails, assets, or removed 404/410 records).
+    Filters to successful HTML captures (``statuscode:200``) of real
+    product/ingredient pages, de-duplicating http/https + trailing-slash variants
+    of the same page. Uses CDX ``resumeKey`` pagination so arbitrarily large
+    result sets (200k+ products) stream in bounded chunks.
     """
-    params = {
-        "url": url_pattern,
-        "output": "json",
-        "fl": "original,timestamp",
-        "filter": ["statuscode:200", "mimetype:text/html"],
-        "collapse": "urlkey",
-        "limit": str(limit),
-    }
-    if from_date:
-        params["from"] = from_date
-    response = client.get(CDX_API, params=params, timeout=120.0)
-    response.raise_for_status()
-    rows = response.json()
-    captures: list[tuple[str, str]] = []
+    resume_key: str | None = None
     seen: set[str] = set()
-    for row in rows[1:] if rows and rows[0] and rows[0][0] == "original" else rows:
-        if not row or len(row) < 2:
-            continue
-        original, timestamp = row[0], row[1]
-        if _looks_like_junk(original) or not id_regex.search(original):
-            continue
-        # Collapse http/https + trailing-slash duplicates of the same page.
-        key = re.sub(r"^https?://", "", original).rstrip("/").lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        captures.append((original, timestamp))
-    return captures
+    while True:
+        params: dict[str, Any] = {
+            "url": url_pattern,
+            "output": "json",
+            "fl": "original",
+            "filter": ["statuscode:200", "mimetype:text/html"],
+            "collapse": "urlkey",
+            "limit": str(page_size),
+            "showResumeKey": "true",
+        }
+        if from_date:
+            params["from"] = from_date
+        if resume_key:
+            params["resumeKey"] = resume_key
+        response = client.get(CDX_API, params=params, timeout=180.0)
+        response.raise_for_status()
+        rows = response.json() or []
+        if rows and rows[0] == ["original"]:
+            rows = rows[1:]
+
+        next_key: str | None = None
+        data_rows: list[list[str]] = []
+        for index, row in enumerate(rows):
+            if row == []:  # blank row precedes the resume key
+                if index + 1 < len(rows) and rows[index + 1]:
+                    next_key = rows[index + 1][0]
+                break
+            data_rows.append(row)
+
+        emitted = 0
+        for row in data_rows:
+            if not row:
+                continue
+            original = row[0]
+            if _looks_like_junk(original) or not id_regex.search(original):
+                continue
+            key = re.sub(r"^https?://", "", original).rstrip("/").lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            emitted += 1
+            yield original
+
+        if not next_key or (emitted == 0 and not data_rows):
+            break
+        resume_key = next_key
 
 
 def snapshot_from_html(html: str, url: str) -> PageSnapshot:
@@ -137,16 +173,6 @@ def snapshot_from_html(html: str, url: str) -> PageSnapshot:
     )
 
 
-# Titles served when EWG returned its generic landing/listing instead of a page
-# (common for removed products archived as a 200 redirect to the database home).
-_GENERIC_TITLES = {
-    "ewg skin deep® cosmetics database",
-    "ewg skin deep cosmetics database",
-    "skin deep® cosmetics database",
-    "wayback machine",
-}
-
-
 def is_generic_listing(snapshot: PageSnapshot) -> bool:
     title = (snapshot.title or "").strip().lower()
     if title in _GENERIC_TITLES:
@@ -157,27 +183,37 @@ def is_generic_listing(snapshot: PageSnapshot) -> bool:
     return not has_score and "|" not in (snapshot.title or "")
 
 
-def fetch_snapshot(client: httpx.Client, original: str, timestamp: str) -> PageSnapshot | None:
-    """Fetch a raw archived page and return its PageSnapshot, or None on failure."""
-    raw_url = WAYBACK_RAW.format(timestamp=timestamp, url=original)
+def fetch_latest_snapshot(client: httpx.Client, original: str) -> PageSnapshot | None:
+    """Fetch the most recent archived capture of a page as a PageSnapshot."""
+    raw_url = WAYBACK_RAW.format(timestamp=LATEST_TIMESTAMP, url=original)
     try:
         response = client.get(raw_url, timeout=60.0, follow_redirects=True)
     except httpx.HTTPError:
         return None
     if response.status_code != 200 or not response.text:
         return None
-    snapshot = snapshot_from_html(response.text, original)
-    # An archived page that captured a challenge or the generic listing is useless.
+    # Resolve to the actual archived URL Wayback redirected to, falling back to
+    # the requested original so downstream IDs/links stay on ewg.org.
+    resolved = _deprefix(str(response.url)) or original
+    snapshot = snapshot_from_html(response.text, resolved)
     if is_challenge_snapshot(snapshot) or is_generic_listing(snapshot):
         return None
     return snapshot
 
 
-def _write_payloads(output_path: Path, kind: str, payloads: Iterable[dict[str, Any]]) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+def _existing_external_ids(db: Session, record_type: str) -> set[str]:
+    rows = db.scalars(
+        select(SourceRecord.external_id).where(
+            SourceRecord.source_code == EWG_SOURCE_CODE,
+            SourceRecord.record_type == record_type,
+        )
+    ).all()
+    return {value for value in rows if value}
+
+
+def _append_payload(output_path: Path, kind: str, payload: dict[str, Any]) -> None:
     with output_path.open("a", encoding="utf-8") as handle:
-        for payload in payloads:
-            handle.write(json.dumps({"kind": kind, "payload": payload}, ensure_ascii=False) + "\n")
+        handle.write(json.dumps({"kind": kind, "payload": payload}, ensure_ascii=False) + "\n")
 
 
 def import_ewg_from_wayback(
@@ -191,85 +227,112 @@ def import_ewg_from_wayback(
     output_path: Path | None = None,
     request_delay: float = 0.5,
     from_date: str | None = None,
-    progress: Any | None = None,
+    skip_existing: bool = True,
+    commit_every: int = 50,
+    progress: Callable[[dict[str, int]], None] | None = None,
 ) -> dict[str, int]:
     """Discover and import EWG Skin Deep pages from the Wayback Machine.
 
     Args:
-        max_products: cap on product pages to fetch (the CDX index lists 200k+).
-        max_ingredients: cap on standalone ingredient pages (when scrape_ingredients).
-        scrape_ingredients: also import dedicated ingredient pages.
+        max_products: cap on product pages; 0 means the entire catalogue.
+        max_ingredients: cap on ingredient pages; 0 with scrape_ingredients means all.
+        skip_existing: skip pages already imported (makes long runs resumable).
+        commit_every: commit to the DB after this many imports so progress persists.
         request_delay: polite delay between archive.org requests.
-        from_date: optional CDX ``from`` filter (e.g. "2023") to prefer recent data.
+        from_date: optional CDX ``from`` filter (e.g. "2023"); latest capture is
+            always fetched regardless.
     """
     ensure_ewg_source(db)
+    if not dry_run:
+        db.commit()
     counts = {
-        "product_urls": 0,
-        "ingredient_urls": 0,
         "products": 0,
         "ingredients": 0,
+        "skipped_existing": 0,
         "skipped": 0,
         "fetch_failures": 0,
     }
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
     headers = {"User-Agent": "BeautyProductVerifier/0.1 (research; contact local-dev@example.com)"}
-    with httpx.Client(headers=headers) as client:
-        product_captures = cdx_capture_urls(
-            client,
-            url_pattern="ewg.org/skindeep/products/*",
-            id_regex=_PRODUCT_ID_RE,
-            limit=max_products * 4 if max_products else 200000,
-            from_date=from_date,
-        )[:max_products]
-        counts["product_urls"] = len(product_captures)
 
-        for original, timestamp in product_captures:
-            snapshot = fetch_snapshot(client, original, timestamp)
-            if snapshot is None:
-                counts["fetch_failures"] += 1
-                continue
-            if not PRODUCT_PATH_RE.search(snapshot.url):
-                counts["skipped"] += 1
-                continue
-            payload = parse_product_snapshot(snapshot)
-            if output_path:
-                _write_payloads(output_path, "product", [payload])
-            if not dry_run:
-                imported = import_ewg_product_payload(
-                    db, payload, review_threshold=review_threshold, dry_run=False
-                )
-                counts["products" if imported is not None else "skipped"] += 1
-            else:
-                counts["products"] += 1
-            if progress is not None:
-                progress(counts)
-            time.sleep(request_delay)
-
-        if scrape_ingredients and max_ingredients > 0:
-            ingredient_captures = cdx_capture_urls(
-                client,
-                url_pattern="ewg.org/skindeep/ingredients/*",
-                id_regex=_INGREDIENT_ID_RE,
-                limit=max_ingredients * 4,
-                from_date=from_date,
-            )[:max_ingredients]
-            counts["ingredient_urls"] = len(ingredient_captures)
-            for original, timestamp in ingredient_captures:
-                snapshot = fetch_snapshot(client, original, timestamp)
+    def _run(
+        *,
+        url_pattern: str,
+        id_regex: re.Pattern[str],
+        path_re: re.Pattern[str],
+        record_type: str,
+        cap: int,
+        kind: str,
+        parse: Callable[[PageSnapshot], dict[str, Any]],
+        do_import: Callable[[dict[str, Any]], bool],
+    ) -> None:
+        existing = _existing_external_ids(db, record_type) if skip_existing else set()
+        processed_since_commit = 0
+        imported_count = 0
+        with httpx.Client(headers=headers) as client:
+            for original in iter_cdx_originals(
+                client, url_pattern=url_pattern, id_regex=id_regex, from_date=from_date
+            ):
+                if cap and imported_count >= cap:
+                    break
+                if skip_existing and _external_id_from_url(original) in existing:
+                    counts["skipped_existing"] += 1
+                    continue
+                snapshot = fetch_latest_snapshot(client, original)
                 if snapshot is None:
                     counts["fetch_failures"] += 1
                     continue
-                if not INGREDIENT_PATH_RE.search(snapshot.url):
+                if not path_re.search(snapshot.url):
                     counts["skipped"] += 1
                     continue
-                payload = parse_ingredient_snapshot(snapshot)
+                payload = parse(snapshot)
                 if output_path:
-                    _write_payloads(output_path, "ingredient", [payload])
-                if not dry_run:
-                    imported = import_ewg_ingredient_payload(db, payload, dry_run=False)
-                    if imported is not None:
-                        counts["ingredients"] += 1
+                    _append_payload(output_path, kind, payload)
+                if dry_run:
+                    counts[f"{kind}s"] += 1
+                    imported_count += 1
+                elif do_import(payload):
+                    counts[f"{kind}s"] += 1
+                    imported_count += 1
+                    processed_since_commit += 1
+                    if processed_since_commit >= commit_every:
+                        db.commit()
+                        processed_since_commit = 0
                 else:
-                    counts["ingredients"] += 1
+                    counts["skipped"] += 1
+                if progress is not None:
+                    progress(counts)
                 time.sleep(request_delay)
+        if not dry_run:
+            db.commit()
+
+    _run(
+        url_pattern="ewg.org/skindeep/products/*",
+        id_regex=_PRODUCT_ID_RE,
+        path_re=PRODUCT_PATH_RE,
+        record_type="product",
+        cap=max_products,
+        kind="product",
+        parse=parse_product_snapshot,
+        do_import=lambda payload: import_ewg_product_payload(
+            db, payload, review_threshold=review_threshold, dry_run=False
+        )
+        is not None,
+    )
+
+    if scrape_ingredients:
+        _run(
+            url_pattern="ewg.org/skindeep/ingredients/*",
+            id_regex=_INGREDIENT_ID_RE,
+            path_re=INGREDIENT_PATH_RE,
+            record_type="ingredient",
+            cap=max_ingredients,
+            kind="ingredient",
+            parse=parse_ingredient_snapshot,
+            do_import=lambda payload: import_ewg_ingredient_payload(db, payload, dry_run=False)
+            is not None,
+        )
 
     return counts

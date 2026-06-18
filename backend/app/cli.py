@@ -255,13 +255,40 @@ def import_ewg_wayback_command(
         "--output-path",
         help="Optional JSONL file to append parsed payloads before import.",
     ),
+    progress_every: int = typer.Option(
+        100,
+        "--progress-every",
+        min=0,
+        help="Print a progress line every N processed pages (0 to disable).",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Parse without writing to the database."),
 ) -> None:
     """Import EWG Skin Deep from the Wayback Machine (no Cloudflare, no browser).
 
     EWG Skin Deep is entirely a cosmetics/beauty database, so this imports beauty
-    products directly from archive.org's mirror of every product page.
+    products directly from archive.org's mirror of every product page. Use
+    --max-products 0 (and --max-ingredients 0 with --scrape-ingredients) for the
+    full catalogue; the run is resumable and always fetches the latest capture.
     """
+    from datetime import datetime
+
+    def _progress(counts: dict[str, int]) -> None:
+        if not progress_every:
+            return
+        total = (
+            counts["products"]
+            + counts["ingredients"]
+            + counts["skipped"]
+            + counts["fetch_failures"]
+        )
+        if total and total % progress_every == 0:
+            stamp = datetime.now().strftime("%H:%M:%S")
+            console.print(
+                f"[{stamp}] products={counts['products']} ingredients={counts['ingredients']} "
+                f"skipped_existing={counts['skipped_existing']} skipped={counts['skipped']} "
+                f"fetch_failures={counts['fetch_failures']}"
+            )
+
     with _session() as db:
         counts = import_ewg_from_wayback(
             db,
@@ -273,6 +300,7 @@ def import_ewg_wayback_command(
             output_path=output_path,
             request_delay=request_delay,
             from_date=from_date,
+            progress=_progress,
         )
         if dry_run:
             db.rollback()
