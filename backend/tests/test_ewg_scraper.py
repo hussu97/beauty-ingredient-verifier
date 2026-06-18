@@ -196,6 +196,42 @@ def test_select_product_image_skips_icons_placeholders_and_lazy_srcs():
     assert _select_product_image_url([{"src": "https://x/icon-search.svg", "alt": ""}]) is None
 
 
+def test_fusion_normalize_drops_junk_keeps_inci_aligned_scores():
+    from app.services.importers.ewg_wayback import _fusion_normalize_product
+
+    payload = {
+        "ingredients_from_packaging": "WATER, GLYCERIN, CETEARYL ALCOHOL, PHENOXYETHANOL",
+        "ingredients": [
+            {"name": "DONATE"},
+            {"name": "WATER", "hazard_score": 1},
+            {"name": "GLYCERIN", "hazard_score": 2},
+            {"name": "HOW WE DETERMINE SCORES"},
+            {"name": "CETEARYL ALCOHOL", "hazard_score": 1},
+            {"name": "PHENOXYETHANOL", "hazard_score": 4},
+        ],
+    }
+    result = _fusion_normalize_product(payload)
+    names = [row["name"] for row in result["ingredients"]]
+    assert names == ["WATER", "GLYCERIN", "CETEARYL ALCOHOL", "PHENOXYETHANOL"]
+    assert all("hazard_score" in row for row in result["ingredients"])  # EWG scores kept
+
+
+def test_fusion_normalize_falls_back_to_inci_when_structured_is_junk():
+    from app.services.importers.ewg_wayback import _fusion_normalize_product
+
+    payload = {
+        "ingredients_from_packaging": "WATER, GLYCERIN, NIACINAMIDE, PANTHENOL",
+        "ingredients": [{"name": "DONATE"}, {"name": "LEARN MORE ABOUT EWG VERIFIED"}],
+    }
+    result = _fusion_normalize_product(payload)
+    assert [r["name"] for r in result["ingredients"]] == [
+        "WATER",
+        "GLYCERIN",
+        "NIACINAMIDE",
+        "PANTHENOL",
+    ]
+
+
 def test_parse_proxy_variants():
     assert _parse_proxy(None) is None
     assert _parse_proxy("http://u:p@1.2.3.4:8080") == {

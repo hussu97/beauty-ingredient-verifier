@@ -190,6 +190,22 @@ def _score_from_images(images: list[dict[str, str]], *, prefix: str) -> tuple[in
     return None, None
 
 
+# UI chrome, hazard-level labels and scoring-methodology phrases that render in
+# uppercase on EWG pages and otherwise get mistaken for ingredient names.
+_INGREDIENT_NAME_JUNK_RE = re.compile(
+    r"^(LEARN MORE|READ MORE|EWG VERIFIED|SEE |VIEW |SHOW |HIDE |HOW WE |WHAT IS |"
+    r"(HIGH|MODERATE|LOW|NO|UNKNOWN|MODERATE-HIGH) HAZARD|"
+    r"(PRODUCT|INGREDIENT) SCORE|DETERMINE SCORE|"
+    r"WEIGHT[- ]OF[- ]EVIDENCE|UNDERSTANDING SCORES?|DATA (AVAILABILITY|GAP))",
+    re.IGNORECASE,
+)
+
+
+def _is_junk_ingredient_name(name: str | None) -> bool:
+    clean = (name or "").strip()
+    return not clean or bool(_INGREDIENT_NAME_JUNK_RE.match(clean))
+
+
 def _ingredient_sections(lines: list[str], links: list[dict[str, str]], images: list[dict[str, str]]) -> list[dict[str, Any]]:
     ingredient_links = [
         link["href"]
@@ -224,10 +240,11 @@ def _ingredient_sections(lines: list[str], links: list[dict[str, str]], images: 
                 and normalized not in excluded_names
                 and "image" not in normalized
                 and "availability" not in normalized
+                and not _is_junk_ingredient_name(previous)
             ):
                 name = previous
                 break
-        if not name:
+        if not name or _is_junk_ingredient_name(name):
             continue
         availability = lines[index].split(":", 1)[-1].strip() if ":" in lines[index] else None
         section_end = data_indexes[position + 1] if position + 1 < len(data_indexes) else len(lines)

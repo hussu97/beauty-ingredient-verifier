@@ -44,6 +44,7 @@ from app.services.importers.ewg_skin_deep import (
     import_ewg_ingredient_payload,
     import_ewg_product_payload,
 )
+from app.services.normalization import normalize_text, split_ewg_ingredients
 
 CDX_API = "http://web.archive.org/cdx/search/cdx"
 WAYBACK_RAW = "https://web.archive.org/web/{timestamp}id_/{url}"
@@ -173,6 +174,45 @@ def snapshot_from_html(html: str, url: str) -> PageSnapshot:
     return PageSnapshot(
         url=url, title=title, h1=h1, text=text, links=links, images=images, headings=headings
     )
+
+
+def _fusion_normalize_product(payload: dict[str, Any]) -> dict[str, Any]:
+    """Clean the ingredient list against the authoritative packaging INCI.
+
+    The structured per-ingredient parse can pick up stray UI text on archived
+    pages. The packaging INCI list is clean and uses the same vocabulary as Open
+    Beauty Facts, so we keep only structured rows (which carry EWG hazard scores)
+    whose name actually appears in the INCI, and otherwise fall back to the INCI
+    names. This guarantees real, OBF-normalizable ingredients for source fusion.
+    """
+    inci = split_ewg_ingredients(payload.get("ingredients_from_packaging") or "")
+    if not inci:
+        return payload
+    inci_norm = [normalize_text(name) for name in inci]
+    inci_tokens = [set(name.split()) for name in inci_norm]
+
+    def _matches(name: str | None) -> bool:
+        target = normalize_text(name)
+        if not target:
+            return False
+        target_tokens = set(target.split())
+        for norm, tokens in zip(inci_norm, inci_tokens):
+            if not norm:
+                continue
+            if target == norm or target in norm or norm in target:
+                return True
+            if target_tokens and tokens:
+                overlap = len(target_tokens & tokens) / len(target_tokens | tokens)
+                if overlap >= 0.5:
+                    return True
+        return False
+
+    validated = [row for row in (payload.get("ingredients") or []) if _matches(row.get("name"))]
+    if len(validated) >= max(3, len(inci) // 2):
+        payload["ingredients"] = validated
+    else:
+        payload["ingredients"] = [{"name": name, "rank": i} for i, name in enumerate(inci, 1)]
+    return payload
 
 
 def is_generic_listing(snapshot: PageSnapshot) -> bool:
@@ -366,7 +406,7 @@ def import_ewg_from_wayback(
         record_type="product",
         cap=max_products,
         kind="product",
-        parse=parse_product_snapshot,
+        parse=lambda snapshot: _fusion_normalize_product(parse_product_snapshot(snapshot)),
         do_import=lambda payload: import_ewg_product_payload(
             db, payload, review_threshold=review_threshold, dry_run=False
         )
