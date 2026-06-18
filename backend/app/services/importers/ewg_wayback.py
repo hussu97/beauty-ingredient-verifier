@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any, Callable, Iterator
 from urllib.parse import urljoin
@@ -229,6 +230,7 @@ def import_ewg_from_wayback(
     from_date: str | None = None,
     skip_existing: bool = True,
     commit_every: int = 50,
+    fetch_workers: int = 1,
     progress: Callable[[dict[str, int]], None] | None = None,
 ) -> dict[str, int]:
     """Discover and import EWG Skin Deep pages from the Wayback Machine.
@@ -238,7 +240,9 @@ def import_ewg_from_wayback(
         max_ingredients: cap on ingredient pages; 0 with scrape_ingredients means all.
         skip_existing: skip pages already imported (makes long runs resumable).
         commit_every: commit to the DB after this many imports so progress persists.
-        request_delay: polite delay between archive.org requests.
+        request_delay: polite per-worker delay between archive.org requests.
+        fetch_workers: parallel archive.org fetch threads. Fetch+parse run
+            concurrently; DB imports stay serial (SQLite is single-writer).
         from_date: optional CDX ``from`` filter (e.g. "2023"); latest capture is
             always fetched regardless.
     """
@@ -269,42 +273,88 @@ def import_ewg_from_wayback(
         do_import: Callable[[dict[str, Any]], bool],
     ) -> None:
         existing = _existing_external_ids(db, record_type) if skip_existing else set()
-        processed_since_commit = 0
-        imported_count = 0
+        state = {"processed_since_commit": 0, "imported": 0}
+        workers = max(1, fetch_workers)
+
+        def _ingest(snapshot: PageSnapshot | None) -> None:
+            if snapshot is None:
+                counts["fetch_failures"] += 1
+                return
+            if not path_re.search(snapshot.url):
+                counts["skipped"] += 1
+                return
+            if cap and state["imported"] >= cap:
+                return
+            payload = parse(snapshot)
+            if output_path:
+                _append_payload(output_path, kind, payload)
+            if dry_run:
+                counts[f"{kind}s"] += 1
+                state["imported"] += 1
+            elif do_import(payload):
+                counts[f"{kind}s"] += 1
+                state["imported"] += 1
+                state["processed_since_commit"] += 1
+                if state["processed_since_commit"] >= commit_every:
+                    db.commit()
+                    state["processed_since_commit"] = 0
+            else:
+                counts["skipped"] += 1
+            if progress is not None:
+                progress(counts)
+
         with httpx.Client(headers=headers) as client:
-            for original in iter_cdx_originals(
-                client, url_pattern=url_pattern, id_regex=id_regex, from_date=from_date
-            ):
-                if cap and imported_count >= cap:
-                    break
-                if skip_existing and _external_id_from_url(original) in existing:
-                    counts["skipped_existing"] += 1
-                    continue
-                snapshot = fetch_latest_snapshot(client, original)
-                if snapshot is None:
-                    counts["fetch_failures"] += 1
-                    continue
-                if not path_re.search(snapshot.url):
-                    counts["skipped"] += 1
-                    continue
-                payload = parse(snapshot)
-                if output_path:
-                    _append_payload(output_path, kind, payload)
-                if dry_run:
-                    counts[f"{kind}s"] += 1
-                    imported_count += 1
-                elif do_import(payload):
-                    counts[f"{kind}s"] += 1
-                    imported_count += 1
-                    processed_since_commit += 1
-                    if processed_since_commit >= commit_every:
-                        db.commit()
-                        processed_since_commit = 0
-                else:
-                    counts["skipped"] += 1
-                if progress is not None:
-                    progress(counts)
-                time.sleep(request_delay)
+
+            def _candidates() -> Iterator[str]:
+                for original in iter_cdx_originals(
+                    client, url_pattern=url_pattern, id_regex=id_regex, from_date=from_date
+                ):
+                    if skip_existing and _external_id_from_url(original) in existing:
+                        counts["skipped_existing"] += 1
+                        continue
+                    yield original
+
+            def _fetch(original: str) -> PageSnapshot | None:
+                # Per-worker delay keeps the aggregate request rate polite.
+                if request_delay:
+                    time.sleep(request_delay)
+                return fetch_latest_snapshot(client, original)
+
+            source = _candidates()
+            exhausted = False
+            inflight: dict[Any, str] = {}
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+
+                def _submit() -> None:
+                    nonlocal exhausted
+                    try:
+                        original = next(source)
+                    except StopIteration:
+                        exhausted = True
+                        return
+                    inflight[pool.submit(_fetch, original)] = original
+
+                window = workers * 3
+                while True:
+                    while (
+                        not exhausted
+                        and len(inflight) < window
+                        and not (cap and state["imported"] >= cap)
+                    ):
+                        _submit()
+                    if not inflight:
+                        break
+                    done, _ = wait(inflight, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        inflight.pop(future, None)
+                        try:
+                            snapshot = future.result()
+                        except Exception:
+                            counts["fetch_failures"] += 1
+                            continue
+                        # DB import happens here, in the main thread, serially.
+                        _ingest(snapshot)
         if not dry_run:
             db.commit()
 

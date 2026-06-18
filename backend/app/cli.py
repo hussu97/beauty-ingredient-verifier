@@ -249,6 +249,14 @@ def import_ewg_wayback_command(
         help="Optional CDX 'from' filter (e.g. 2023) to prefer recent captures.",
     ),
     request_delay: float = typer.Option(0.5, "--request-delay", min=0.0),
+    fetch_workers: int = typer.Option(
+        1,
+        "--fetch-workers",
+        min=1,
+        max=32,
+        help="Parallel archive.org fetch threads. Fetch+parse run concurrently; "
+        "DB imports stay serial. Try 8. Lower it if fetch_failures spike (429s).",
+    ),
     review_threshold: float = typer.Option(0.82, "--review-threshold", min=0.0, max=1.0),
     output_path: Path | None = typer.Option(
         None,
@@ -300,6 +308,7 @@ def import_ewg_wayback_command(
             output_path=output_path,
             request_delay=request_delay,
             from_date=from_date,
+            fetch_workers=fetch_workers,
             progress=_progress,
         )
         if dry_run:
