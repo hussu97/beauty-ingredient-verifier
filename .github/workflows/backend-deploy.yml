@@ -104,7 +104,15 @@ jobs:
           cd /opt/bpv
           printf '%s\n' "${{ secrets.GHCR_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker compose --env-file .env -f docker-compose.prod.yml pull api
-          docker compose --env-file .env -f docker-compose.prod.yml run --rm api alembic upgrade head
-          docker compose --env-file .env -f docker-compose.prod.yml up -d
-          curl -fsS http://127.0.0.1:8000/api/v1/health
+          docker compose --env-file .env -f docker-compose.prod.yml run --rm -T api alembic upgrade head </dev/null
+          docker compose --env-file .env -f docker-compose.prod.yml up -d --remove-orphans
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/api/v1/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose --env-file .env -f docker-compose.prod.yml ps
+          docker compose --env-file .env -f docker-compose.prod.yml logs --tail=160 api caddy postgres
+          exit 1
           EOF

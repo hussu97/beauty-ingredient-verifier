@@ -6,7 +6,7 @@ A local-first MVP for building an automated beauty product and ingredient databa
 
 - `backend/` - FastAPI API, SQLite/PostgreSQL data layer, import/enrichment/scan services, CLI commands.
 - `frontend/` - React + Vite scanner-first workspace with product directory and admin database/source tabs.
-- `.github/workflows/backend-deploy.yml` - backend CI/deploy pipeline that tests, Buildx-builds the API image, pushes GHCR, and restarts the GCP VM stack.
+- `.github/workflows/backend-deploy.yml` - backend CI/deploy pipeline that tests, Buildx-builds the API image, pushes GHCR, runs migrations noninteractively, and restarts the GCP VM stack.
 - `shared/profile-options.json` - source-backed clinical profile vocabulary used by both frontend controls and backend rule matching.
 - `docs/` - implementation notes and future research.
 - `scripts/` - convenience scripts for local development.
