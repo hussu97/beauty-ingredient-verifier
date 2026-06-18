@@ -30,6 +30,7 @@ from app.services.normalization import (
     split_ingredients,
 )
 from app.services.source_records import upsert_source, upsert_source_record
+from app.services.source_fusion import link_ingredient_source, link_product_source, link_product_term
 
 OPEN_BEAUTY_FACTS_SOURCE_CODE = "src_open_beauty_facts"
 OPEN_BEAUTY_FACTS_IMAGE_BASE_URL = "https://images.openbeautyfacts.org/images/products"
@@ -430,11 +431,49 @@ def import_product_payload(db: Session, payload: dict[str, Any], *, source_url: 
         product.data_quality_warnings = list(payload.get("data_quality_warnings_tags") or [])
         product.last_source_update_at = _timestamp(payload.get("last_modified_t"))
 
+    link_product_source(
+        db,
+        product=product,
+        record=record,
+        external_id=external_id,
+        match_method="open_beauty_facts_primary",
+        match_confidence=1.0,
+        source_updated_at=_timestamp(payload.get("last_modified_t")),
+    )
+
+    if product.category_text:
+        for raw_category in [part.strip() for part in product.category_text.split(",") if part.strip()]:
+            link_product_term(
+                db,
+                product=product,
+                record=record,
+                term_type="category",
+                raw_value=raw_category,
+                confidence_score=0.72,
+            )
+    for warning in payload.get("data_quality_warnings_tags") or []:
+        link_product_term(
+            db,
+            product=product,
+            record=record,
+            term_type="data_quality",
+            raw_value=str(warning),
+            confidence_score=0.7,
+        )
+
     for raw_category in payload.get("categories_tags") or []:
         category = _upsert_category(db, str(raw_category))
         exists = any(link.category_code == category.category_code for link in product.categories)
         if not exists:
             product.categories.append(ProductCategory(product_code=product.product_code, category_code=category.category_code))
+        link_product_term(
+            db,
+            product=product,
+            record=record,
+            term_type="category",
+            raw_value=str(raw_category),
+            confidence_score=0.76,
+        )
 
     structured = payload.get("ingredients")
     ingredient_rows: list[dict[str, Any]]
@@ -457,6 +496,14 @@ def import_product_payload(db: Session, payload: dict[str, Any], *, source_url: 
         if not raw:
             continue
         ingredient = _upsert_ingredient(db, raw, record.source_record_code)
+        link_ingredient_source(
+            db,
+            ingredient=ingredient,
+            record=record,
+            external_id=str(row.get("id") or row.get("text") or raw),
+            match_method="open_beauty_facts_ingredient",
+            match_confidence=0.78,
+        )
         link_code = make_code("ping", f"{product.product_code}:{ingredient.ingredient_code}")
         link = db.get(ProductIngredient, link_code)
         if link is None:

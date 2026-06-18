@@ -62,6 +62,8 @@ Profile dropdowns and the harm-meter scale are fully client-side UI behavior; no
 
 The current scan UI can report exact upload progress from the browser. Matching/OCR/embedding work is displayed as an indeterminate progress state until the synchronous `POST /api/v1/scans` response returns. Per-stage backend percentages would require an async scan job or streamed progress endpoint later.
 
+EWG Skin Deep is supported as an enrichment source. Import EWG exports through `import-ewg-skin-deep`, or collect local personal-use pages through `scrape-ewg-skin-deep`. Both paths store raw EWG payloads in `source_records`, queryable unmodeled fields in `source_record_facts`, link products and ingredients through source-fusion tables, and expose normalized source attributes/conflicts in product detail and admin source views. Keep EWG-provided values source-separated from Open Beauty Facts so provenance and conflicts remain auditable.
+
 ## 5. Environment Variables
 
 | Variable | Service | Required | Default | Description |
@@ -80,6 +82,11 @@ The current scan UI can report exact upload progress from the browser. Matching/
 | `BPV_OCR_LANGUAGE` | Backend | No | `en` | PaddleOCR language code. |
 | `BPV_IMAGE_EMBEDDING_MODEL` | Backend | No | `sentence-transformers/clip-ViT-B-32` | Sentence Transformers image embedding model. |
 | `BPV_IMAGE_DOWNLOAD_TIMEOUT_SECONDS` | Backend | No | `20` | Timeout for caching product images during `index-images`. |
+| `BPV_EWG_SOURCE_PATH` | Backend jobs | No | unset | Optional default path to an authorized EWG Skin Deep `.json`, `.jsonl`, `.csv`, or `.parquet` export. |
+| `BPV_EWG_API_BASE_URL` | Backend jobs | No | unset | Reserved for an authorized EWG API endpoint; file import uses the same normalization path. |
+| `BPV_EWG_API_KEY` | Backend jobs | No | unset | Reserved credential for authorized EWG API access. Treat as secret in production. |
+| `BPV_EWG_ATTRIBUTION_TEXT` | Backend/frontend | No | `Contains information from EWG Skin Deep.` | Attribution text to show where EWG data is surfaced. |
+| `BPV_EWG_USER_AGENT` | Backend jobs | No | `BeautyProductVerifier/0.1 (local-dev@example.com)` | User-Agent for authorized EWG API/file retrieval workflows. |
 | `VITE_API_BASE_URL` | Frontend | Yes | `http://127.0.0.1:8000/api/v1` | Backend API base URL. |
 
 ## 6. ML Deployment Notes
@@ -87,8 +94,13 @@ The current scan UI can report exact upload progress from the browser. Matching/
 The free ML stack is best run locally or as a separate batch worker:
 
 - Install backend extras with `python -m pip install -e ".[ml,data]"`.
+- For local EWG browser scraping, the scraper prefers **patchright** (a stealth-patched Playwright fork) and falls back to stock Playwright. Install the browser once with `patchright install chrome` (preferred) or `python -m playwright install chromium`.
+- EWG fronts Skin Deep with a **Cloudflare Turnstile** challenge. It is environment-scored, so a **cold headless run cannot pass it** — patchright + a real Chrome profile clears it within seconds only when the browser is **headed** (or run under a virtual display such as `xvfb-run -a` on a headless server). The scraper stays still while Turnstile evaluates (scrolling/mouse gestures during evaluation break the auto-pass) and only performs human-like gestures after it clears, which also loads lazy images/ingredients for more accurate extraction.
+- Recommended unattended recipe: `xvfb-run -a scrape-ewg-skin-deep --headed --all-categories --user-data-dir storage/ewg-browser-profile --challenge-wait-seconds 60 --delay-seconds 2 ...`. The persistent `--user-data-dir` profile reuses the cleared `cf_clearance` cookie across runs. Keep `--browser-workers` low (1–2) and `--delay-seconds` ≥ 2; hammering the site gets the source IP flagged and raises challenge difficulty. For sustained high-volume collection, run from a residential/rotating egress IP. Database imports stay serial regardless of `--browser-workers`.
 - Set `BPV_ENABLE_OPTIONAL_ML=true`.
 - After importing older Open Beauty Facts exports, run `beauty-product-verifier backfill-open-beauty-facts-images` before image indexing if product image coverage looks low.
+- Run `beauty-product-verifier import-ewg-skin-deep --source-path /path/to/ewg-export.jsonl --review-threshold 0.82` to ingest authorized EWG products and ingredient concern data. Use `--dry-run` first for a new export shape.
+- Run `beauty-product-verifier scrape-ewg-skin-deep --headed --all-categories --max-products 250 --browser-workers 2 --delay-seconds 2 --output-path storage/ewg-scrape.jsonl` for browser-based EWG category collection (wrap in `xvfb-run -a` on a headless host so Turnstile can clear). Use small batches and `--dry-run` when auditing a new page shape.
 - Run `beauty-product-verifier apply-product-corrections` after imports when using the built-in source-backed correction library for known incomplete crowdsourced product records.
 - Run `index-images --all --batch-size 25 --download-workers 4` after product imports to populate CLIP embeddings.
 - Use `index-images --status`, `index-images --pause`, and `index-images --resume` for resumable local or worker runs.

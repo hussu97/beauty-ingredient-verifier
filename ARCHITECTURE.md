@@ -25,6 +25,9 @@ Clinical profile values are controlled by `shared/profile-options.json`. The fro
 Core tables:
 
 - `sources`, `source_records`
+- `source_record_facts`
+- `product_source_links`, `ingredient_source_links`
+- `canonical_terms`, `term_aliases`, `product_term_links`, `ingredient_term_links`
 - `brands`, `categories`, `products`, `product_categories`, `product_images`
 - `ingredients`, `ingredient_synonyms`, `product_ingredients`
 - `risk_rules`, `risk_evaluations`
@@ -35,12 +38,14 @@ The schema keeps external records immutable enough for provenance, while normali
 
 ## Data Pipeline
 
-1. `import-open-beauty-facts` imports beauty product data from Open Beauty Facts bulk exports or a local sample fixture. Product image derivation supports flat `images.front_*` keys, nested `images.selected.<kind>.<language>` records, and conservative untyped uploaded-image fallbacks from Open Beauty Facts exports.
-2. `enrich-ingredients` adds source-backed ingredient metadata and trusted risk rules from public regulatory, scientific, and medical-specialty sources. Rules are expanded onto exact ingredient names and conservative ingredient-name patterns such as fragrance mixtures, then versioned through `source_records`.
-3. `refresh-risk-signals` stores public adverse-event signals as weak evidence, not causation.
-4. `backfill-open-beauty-facts-images` repairs already-imported products by deriving missing `product_images` rows from stored `source_records.payload` image metadata.
-5. `apply-product-corrections` applies source-backed product repairs for known incomplete crowdsourced records, preserving the original source record while pointing corrected product fields and ingredient links at the trusted correction source.
-6. `index-images` downloads/caches product images, computes CLIP embeddings with Sentence Transformers when ML extras are installed, stores portable JSON vectors in `image_embeddings`, and mirrors them into sqlite-vec when available. Long indexing runs are resumable: DB image statuses preserve per-image state, `storage/image-index-progress.json` records run progress, and `storage/image-index.pause` lets a running batch pause cleanly. Downloads can be prefetched in parallel with `--download-workers`, while embedding and DB writes stay serial for SQLite/local stability. Failed image retries are tracked within each run so permanently broken source URLs are attempted once per retry run, then left as `download-failed`.
+1. `import-open-beauty-facts` imports beauty product data from Open Beauty Facts bulk exports or a local sample fixture. Product image derivation supports flat `images.front_*` keys, nested `images.selected.<kind>.<language>` records, and conservative untyped uploaded-image fallbacks from Open Beauty Facts exports. Imports also populate source-fusion links and canonical category/data-quality terms for later cross-source reconciliation.
+2. `import-ewg-skin-deep` imports authorized EWG Skin Deep product and ingredient exports from JSON, JSONL, CSV, or Parquet. It stores raw EWG payloads in `source_records`, links EWG records to products/ingredients, maps EWG product use/form/body-area/certification/concern fields into canonical terms, and deduplicates products by barcode first, then by brand/name/category/ingredient similarity. EWG concern buckets can generate internal profile-aware rules only when they map to supported clinical or product-context logic.
+3. `scrape-ewg-skin-deep` uses Playwright/Chromium for local personal-use collection from EWG browse, product, and ingredient pages. It uses a persistent browser profile, rate limits page visits, refuses to bypass browser challenges, can discover all Skin Deep beauty category links from the landing page, collects product/ingredient pages with bounded parallel browser workers, and imports through the same EWG normalization path with serial database writes. Fields that do not yet have first-class product columns, such as hazard score image alt text, animal-testing policy, concern references, page headings, and scrape diagnostics, are stored in `source_record_facts`.
+4. `enrich-ingredients` adds source-backed ingredient metadata and trusted risk rules from public regulatory, scientific, and medical-specialty sources. Rules are expanded onto exact ingredient names and conservative ingredient-name patterns such as fragrance mixtures, then versioned through `source_records`.
+5. `refresh-risk-signals` stores public adverse-event signals as weak evidence, not causation.
+6. `backfill-open-beauty-facts-images` repairs already-imported products by deriving missing `product_images` rows from stored `source_records.payload` image metadata.
+7. `apply-product-corrections` applies source-backed product repairs for known incomplete crowdsourced records, preserving the original source record while pointing corrected product fields and ingredient links at the trusted correction source.
+8. `index-images` downloads/caches product images, computes CLIP embeddings with Sentence Transformers when ML extras are installed, stores portable JSON vectors in `image_embeddings`, and mirrors them into sqlite-vec when available. Long indexing runs are resumable: DB image statuses preserve per-image state, `storage/image-index-progress.json` records run progress, and `storage/image-index.pause` lets a running batch pause cleanly. Downloads can be prefetched in parallel with `--download-workers`, while embedding and DB writes stay serial for SQLite/local stability. Failed image retries are tracked within each run so permanently broken source URLs are attempted once per retry run, then left as `download-failed`.
 
 Open Beauty Facts API calls are allowed only for user-triggered, one-off barcode lookups. Bulk ingestion uses exports.
 
@@ -71,7 +76,7 @@ The `/directory` route is a user-facing PLP for brand/category browsing. It load
 
 The frontend uses shared responsive rules across scanner, directory, PDP, and admin surfaces: desktop can use split panes and sticky context panels, while tablet/mobile stacks filters before results, keeps controls full-width, and turns product rows into compact two-line/two-column scan-friendly rows.
 
-Database browsing, source inventory, and import status live under `/admin` tabs so provenance-heavy operations do not compete with the scanner or directory. Product and ingredient detail routes remain available for admin/deep-link usage.
+Database browsing, source inventory, source-fusion term summaries, source-conflict candidates, and import status live under `/admin` tabs so provenance-heavy operations do not compete with the scanner or directory. Product and ingredient detail routes remain available for admin/deep-link usage.
 
 The UI avoids medical certainty. It labels data freshness, matched warnings, and unknown states without exposing internal matching or source-confidence heuristics in the scanner flow.
 
@@ -82,6 +87,8 @@ Risk rules are ingredient-linked, source-backed, versioned, and traceable to `so
 - Clinical profile filters: controlled skin, scalp, age band, allergies, sensitivities, pregnancy/lactation, and conditions.
 - Product metadata filters: product/category/name keywords for contexts such as hair dye, hair smoothing, skin lightening, AHA/BHA skin products, eye-area dye products, and leave-on/hair products.
 - Source URLs in matched risk outputs, so UI results can link to the rule evidence.
+
+EWG concern-bucket rules are generated conservatively. Numeric EWG scores are not copied into the internal severity scale; instead, concern categories such as allergies/immunotoxicity, irritation, reproductive/developmental toxicity, contamination, use restrictions, cancer, neurotoxicity, and organ-system toxicity are mapped to internal evidence kinds and only activated when the rule has supported profile or product-context applicability.
 
 Rules do not score by gender, nationality, ethnicity, or unsupported demographic assumptions.
 

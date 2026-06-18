@@ -11,6 +11,8 @@ import type {
   ScanJob,
   ScanProgress,
   Source,
+  SourceConflictProduct,
+  SourceTermSummary,
 } from "./types";
 
 export const API_BASE_URL =
@@ -91,6 +93,8 @@ export const api = {
     request<IngredientSummary[]>(`/ingredients${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   ingredient: (ingredientCode: string) => request<IngredientDetail>(`/ingredients/${ingredientCode}`),
   sources: () => request<Source[]>("/sources"),
+  sourceTerms: () => request<SourceTermSummary[]>("/sources/terms"),
+  sourceConflicts: () => request<SourceConflictProduct[]>("/sources/conflicts"),
   importStatus: () => request<ImportStatus>("/imports/status"),
   scan: (file: File) => {
     const form = new FormData();

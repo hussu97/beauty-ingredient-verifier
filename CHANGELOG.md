@@ -3,6 +3,12 @@
 ## 2026-06-18
 
 ### Backend
+- Added source-fusion tables for product/ingredient source links, canonical terms, term aliases, and source-backed product/ingredient term links.
+- Added active `import-ewg-skin-deep` support for authorized EWG Skin Deep JSON, JSONL, CSV, and Parquet exports with barcode-first product deduplication, brand/name/category/ingredient fuzzy reconciliation, raw source-record storage, canonical term mapping, and conservative EWG concern-rule generation.
+- Added `scrape-ewg-skin-deep`, a Playwright/Chromium local browser scraper for EWG browse/product/ingredient pages with persistent browser profile support, all-category discovery, bounded parallel browser workers, rate limits, challenge detection, optional raw JSONL output, and ingredient-page expansion.
+- Added queryable `source_record_facts` storage for scraped or imported source fields that are useful but not first-class catalog columns yet.
+- Extended product detail, source, and import APIs with source links, normalized attributes, source conflicts, source term summaries, and source-fusion counts.
+- Switched text normalization to preserve non-ASCII names while still stripping diacritics, preventing Cyrillic and other non-Latin product names from collapsing to empty normalized values.
 - Fixed resumable image indexing so `--all --retry-failed` retries each failed image once per run and exits cleanly when only broken source URLs remain.
 - Added `apply-product-corrections` plus a source-backed MAC Cosmetics correction for `prd_7e395068110222`, replacing the truncated Open Beauty Facts `Allerg` ingredient row with the official Fix+ Setting Spray ingredient list.
 - Added search support to `GET /products/directory/groups` so lower-volume brands/categories can be found by name.
@@ -19,10 +25,12 @@
 - Started the local full pending-image embedding run in a detached `screen` session named `bpv-image-index`.
 
 ### Docs
-- Added a TODO to evaluate EWG Skin Deep as a possible product/ingredient enrichment source, with licensing/API checks before implementation.
+- Documented EWG Skin Deep file and browser import operations, source-fusion provenance, Playwright setup, environment variables, and admin audit surfaces.
 - Documented source-backed product corrections, resumable image indexing operations, and clarified that source-confidence heuristics are not shown in the scanner UI.
 
 ### Frontend
+- Added product source chips, normalized attribute chips, and source-conflict rows to product source notes.
+- Added canonical term and source-conflict audit sections to the admin sources tab.
 - Changed directory brand/category search to query the backend instead of filtering only the initially loaded high-volume groups.
 - Swapped scanner steps so upload is Step 2, the harm meter is Step 3, and results remain Step 4.
 - Added paginated directory PLP controls with searchable brand/category filters.

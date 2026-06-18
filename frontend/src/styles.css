@@ -818,6 +818,93 @@ img {
   overflow-wrap: anywhere;
 }
 
+.source-chip-list,
+.attribute-cluster-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.source-chip,
+.attribute-chip {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: white;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.source-chip svg {
+  color: var(--blue);
+}
+
+.attribute-chip {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attribute-chip small {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.source-conflict-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.source-conflict {
+  border: 1px solid rgba(160, 100, 45, 0.22);
+  border-radius: 8px;
+  background: rgba(160, 100, 45, 0.07);
+  padding: 9px;
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+}
+
+.source-conflict span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.source-fact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.source-fact {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 9px;
+  display: grid;
+  gap: 3px;
+  color: var(--ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.source-fact small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
 .ingredient-section {
   display: grid;
   gap: 14px;
@@ -1040,7 +1127,8 @@ img {
 
 .source-row,
 .rule-row,
-.matched-product {
+.matched-product,
+.term-row {
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
 }
@@ -1048,6 +1136,56 @@ img {
 .source-row a {
   color: var(--blue);
   font-weight: 850;
+}
+
+.section-heading.compact {
+  margin-top: 10px;
+}
+
+.inline-note {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.term-grid,
+.conflict-list {
+  display: grid;
+  gap: 8px;
+}
+
+.term-row,
+.conflict-row {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.term-row div,
+.conflict-row div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.term-row span,
+.conflict-row span {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.conflict-row {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.conflict-row svg {
+  color: var(--amber);
 }
 
 .metric-band {

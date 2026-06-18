@@ -70,6 +70,136 @@ class SourceRecord(Base):
     source: Mapped[Source] = relationship(back_populates="records")
 
 
+class SourceRecordFact(Base):
+    __tablename__ = "source_record_facts"
+
+    fact_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    source_record_code: Mapped[str] = mapped_column(ForeignKey("source_records.source_record_code"), index=True)
+    source_code: Mapped[str] = mapped_column(ForeignKey("sources.source_code"), index=True)
+    entity_kind: Mapped[str] = mapped_column(String(40), index=True)
+    product_code: Mapped[str | None] = mapped_column(ForeignKey("products.product_code"), index=True)
+    ingredient_code: Mapped[str | None] = mapped_column(ForeignKey("ingredients.ingredient_code"), index=True)
+    fact_type: Mapped[str] = mapped_column(String(80), index=True)
+    field_name: Mapped[str] = mapped_column(String(120), index=True)
+    label: Mapped[str | None] = mapped_column(String(240))
+    value_text: Mapped[str | None] = mapped_column(Text)
+    value_json: Mapped[Any] = mapped_column(JSON, default=dict)
+    normalized_value: Mapped[str | None] = mapped_column(String(500), index=True)
+    source_url: Mapped[str | None] = mapped_column(String(800))
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.8)
+    created_at: Mapped[datetime] = mapped_column(UTCAwareDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCAwareDateTime(), default=utcnow, onupdate=utcnow)
+
+    source_record: Mapped[SourceRecord] = relationship()
+    source: Mapped[Source] = relationship()
+    product: Mapped[Product | None] = relationship()
+    ingredient: Mapped[Ingredient | None] = relationship()
+
+
+class ProductSourceLink(Base):
+    __tablename__ = "product_source_links"
+
+    product_source_link_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    product_code: Mapped[str] = mapped_column(ForeignKey("products.product_code"), index=True)
+    source_record_code: Mapped[str] = mapped_column(ForeignKey("source_records.source_record_code"), index=True)
+    source_code: Mapped[str] = mapped_column(ForeignKey("sources.source_code"), index=True)
+    external_id: Mapped[str] = mapped_column(String(300))
+    source_url: Mapped[str | None] = mapped_column(String(800))
+    match_method: Mapped[str] = mapped_column(String(80))
+    match_confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    source_updated_at: Mapped[datetime | None] = mapped_column(UTCAwareDateTime())
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(UTCAwareDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCAwareDateTime(), default=utcnow, onupdate=utcnow)
+
+    product: Mapped[Product] = relationship(back_populates="source_links")
+    source_record: Mapped[SourceRecord] = relationship()
+    source: Mapped[Source] = relationship()
+
+
+class IngredientSourceLink(Base):
+    __tablename__ = "ingredient_source_links"
+
+    ingredient_source_link_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    ingredient_code: Mapped[str] = mapped_column(ForeignKey("ingredients.ingredient_code"), index=True)
+    source_record_code: Mapped[str] = mapped_column(ForeignKey("source_records.source_record_code"), index=True)
+    source_code: Mapped[str] = mapped_column(ForeignKey("sources.source_code"), index=True)
+    external_id: Mapped[str] = mapped_column(String(300))
+    source_url: Mapped[str | None] = mapped_column(String(800))
+    match_method: Mapped[str] = mapped_column(String(80))
+    match_confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(UTCAwareDateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCAwareDateTime(), default=utcnow, onupdate=utcnow)
+
+    ingredient: Mapped[Ingredient] = relationship(back_populates="source_links")
+    source_record: Mapped[SourceRecord] = relationship()
+    source: Mapped[Source] = relationship()
+
+
+class CanonicalTerm(Base, TimestampMixin):
+    __tablename__ = "canonical_terms"
+
+    term_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    term_type: Mapped[str] = mapped_column(String(80), index=True)
+    slug: Mapped[str] = mapped_column(String(220), index=True)
+    label: Mapped[str] = mapped_column(String(240))
+    description: Mapped[str | None] = mapped_column(Text)
+
+    aliases: Mapped[list[TermAlias]] = relationship(back_populates="term", cascade="all, delete-orphan")
+    product_links: Mapped[list[ProductTermLink]] = relationship(back_populates="term", cascade="all, delete-orphan")
+    ingredient_links: Mapped[list[IngredientTermLink]] = relationship(back_populates="term", cascade="all, delete-orphan")
+
+
+class TermAlias(Base):
+    __tablename__ = "term_aliases"
+
+    alias_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    term_code: Mapped[str] = mapped_column(ForeignKey("canonical_terms.term_code"), index=True)
+    source_code: Mapped[str | None] = mapped_column(ForeignKey("sources.source_code"))
+    alias: Mapped[str] = mapped_column(String(240))
+    normalized_alias: Mapped[str] = mapped_column(String(260), index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCAwareDateTime(), default=utcnow)
+
+    term: Mapped[CanonicalTerm] = relationship(back_populates="aliases")
+
+
+class ProductTermLink(Base):
+    __tablename__ = "product_term_links"
+
+    product_term_link_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    product_code: Mapped[str] = mapped_column(ForeignKey("products.product_code"), index=True)
+    term_code: Mapped[str] = mapped_column(ForeignKey("canonical_terms.term_code"), index=True)
+    source_record_code: Mapped[str] = mapped_column(ForeignKey("source_records.source_record_code"), index=True)
+    source_code: Mapped[str] = mapped_column(ForeignKey("sources.source_code"), index=True)
+    raw_value: Mapped[str] = mapped_column(String(300))
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.8)
+    created_at: Mapped[datetime] = mapped_column(UTCAwareDateTime(), default=utcnow)
+
+    product: Mapped[Product] = relationship(back_populates="term_links")
+    term: Mapped[CanonicalTerm] = relationship(back_populates="product_links")
+    source_record: Mapped[SourceRecord] = relationship()
+    source: Mapped[Source] = relationship()
+
+
+class IngredientTermLink(Base):
+    __tablename__ = "ingredient_term_links"
+
+    ingredient_term_link_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    ingredient_code: Mapped[str] = mapped_column(ForeignKey("ingredients.ingredient_code"), index=True)
+    term_code: Mapped[str] = mapped_column(ForeignKey("canonical_terms.term_code"), index=True)
+    source_record_code: Mapped[str] = mapped_column(ForeignKey("source_records.source_record_code"), index=True)
+    source_code: Mapped[str] = mapped_column(ForeignKey("sources.source_code"), index=True)
+    raw_value: Mapped[str] = mapped_column(String(300))
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.8)
+    created_at: Mapped[datetime] = mapped_column(UTCAwareDateTime(), default=utcnow)
+
+    ingredient: Mapped[Ingredient] = relationship(back_populates="term_links")
+    term: Mapped[CanonicalTerm] = relationship(back_populates="ingredient_links")
+    source_record: Mapped[SourceRecord] = relationship()
+    source: Mapped[Source] = relationship()
+
+
 class Brand(Base, TimestampMixin):
     __tablename__ = "brands"
 
@@ -110,6 +240,8 @@ class Product(Base, TimestampMixin):
     categories: Mapped[list[ProductCategory]] = relationship(back_populates="product", cascade="all, delete-orphan")
     images: Mapped[list[ProductImage]] = relationship(back_populates="product", cascade="all, delete-orphan")
     ingredients: Mapped[list[ProductIngredient]] = relationship(back_populates="product", cascade="all, delete-orphan")
+    source_links: Mapped[list[ProductSourceLink]] = relationship(back_populates="product", cascade="all, delete-orphan")
+    term_links: Mapped[list[ProductTermLink]] = relationship(back_populates="product", cascade="all, delete-orphan")
 
 
 class ProductCategory(Base):
@@ -155,6 +287,8 @@ class Ingredient(Base, TimestampMixin):
     synonyms: Mapped[list[IngredientSynonym]] = relationship(back_populates="ingredient", cascade="all, delete-orphan")
     product_links: Mapped[list[ProductIngredient]] = relationship(back_populates="ingredient")
     risk_rules: Mapped[list[RiskRule]] = relationship(back_populates="ingredient")
+    source_links: Mapped[list[IngredientSourceLink]] = relationship(back_populates="ingredient", cascade="all, delete-orphan")
+    term_links: Mapped[list[IngredientTermLink]] = relationship(back_populates="ingredient", cascade="all, delete-orphan")
 
 
 class IngredientSynonym(Base):

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Database, FileSearch, FlaskConical, Search } from "lucide-react";
+import { Activity, AlertTriangle, Database, FileSearch, FlaskConical, Search } from "lucide-react";
 import { useState } from "react";
 import { Link, Navigate, NavLink, useParams } from "react-router-dom";
 import { api } from "../api/client";
@@ -32,6 +32,16 @@ export default function AdminPage() {
     queryKey: ["admin-sources"],
     queryFn: api.sources,
     enabled: activeTab === "sources" || activeTab === "imports",
+  });
+  const sourceTermsQuery = useQuery({
+    queryKey: ["admin-source-terms"],
+    queryFn: api.sourceTerms,
+    enabled: activeTab === "sources",
+  });
+  const sourceConflictsQuery = useQuery({
+    queryKey: ["admin-source-conflicts"],
+    queryFn: api.sourceConflicts,
+    enabled: activeTab === "sources",
   });
   const statusQuery = useQuery({
     queryKey: ["admin-import-status"],
@@ -123,6 +133,34 @@ export default function AdminPage() {
                 <StatusBadge>{source.reliability}</StatusBadge>
                 {source.homepage_url && <a href={source.homepage_url} target="_blank" rel="noreferrer">Open source</a>}
               </article>
+            ))}
+          </div>
+          <div className="section-heading compact"><h2>Canonical terms</h2></div>
+          <div className="term-grid">
+            {sourceTermsQuery.data?.slice(0, 36).map((term) => (
+              <article className="term-row" key={term.term_code}>
+                <div>
+                  <strong>{term.label}</strong>
+                  <span>{term.term_type.replace(/_/g, " ")}</span>
+                </div>
+                <span>{term.product_count} products</span>
+                <span>{term.ingredient_count} ingredients</span>
+              </article>
+            ))}
+          </div>
+          <div className="section-heading compact">
+            <h2>Source conflicts</h2>
+            <span className="inline-note">{sourceConflictsQuery.data?.length ?? 0} visible</span>
+          </div>
+          <div className="conflict-list">
+            {sourceConflictsQuery.data?.map((item) => (
+              <Link to={`/products/${item.product_code}`} className="conflict-row" key={item.product_code}>
+                <AlertTriangle size={17} />
+                <div>
+                  <strong>{item.product_name}</strong>
+                  <span>{item.source_conflicts.map((conflict) => conflict.field.replace(/_/g, " ")).join(", ")}</span>
+                </div>
+              </Link>
             ))}
           </div>
         </section>

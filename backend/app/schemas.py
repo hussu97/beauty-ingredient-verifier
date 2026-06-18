@@ -70,6 +70,55 @@ class ProductIngredientOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SourceLinkOut(BaseModel):
+    source_code: str
+    source_name: str
+    external_id: str
+    source_url: str | None
+    record_type: str
+    match_method: str
+    match_confidence: float
+    source_updated_at: datetime | None
+    active: bool
+
+
+class NormalizedAttributeOut(BaseModel):
+    term_code: str
+    term_type: str
+    slug: str
+    label: str
+    source_codes: list[str]
+    confidence_score: float
+
+
+class SourceConflictValueOut(BaseModel):
+    source_code: str
+    source_name: str
+    value: str
+    source_url: str | None
+
+
+class SourceConflictOut(BaseModel):
+    field: str
+    display_value: str | None
+    source_values: list[SourceConflictValueOut]
+
+
+class SourceFactOut(BaseModel):
+    fact_code: str
+    source_code: str
+    entity_kind: str
+    fact_type: str
+    field_name: str
+    label: str | None
+    value_text: str | None
+    value_json: Any
+    source_url: str | None
+    confidence_score: float
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ProductListOut(BaseModel):
     product_code: str
     barcode: str | None
@@ -87,6 +136,11 @@ class ProductListOut(BaseModel):
 class ProductDetailOut(ProductListOut):
     categories: list[ProductCategoryOut]
     ingredients: list[ProductIngredientOut]
+    source_links: list[SourceLinkOut] = Field(default_factory=list)
+    normalized_attributes: list[NormalizedAttributeOut] = Field(default_factory=list)
+    source_conflicts: list[SourceConflictOut] = Field(default_factory=list)
+    source_facts: list[SourceFactOut] = Field(default_factory=list)
+    source_last_updated_at: datetime | None = None
     last_source_update_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -240,3 +294,24 @@ class ImportStatusOut(BaseModel):
     source_records: int
     risk_rules: int
     scan_jobs: int
+    product_source_links: int = 0
+    ingredient_source_links: int = 0
+    canonical_terms: int = 0
+    source_record_facts: int = 0
+    ewg_source_records: int = 0
+    source_conflict_products: int = 0
+
+
+class SourceTermSummaryOut(BaseModel):
+    term_code: str
+    term_type: str
+    slug: str
+    label: str
+    product_count: int
+    ingredient_count: int
+
+
+class SourceConflictProductOut(BaseModel):
+    product_code: str
+    product_name: str
+    source_conflicts: list[SourceConflictOut]

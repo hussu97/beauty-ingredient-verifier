@@ -88,6 +88,28 @@ cd backend
 beauty-product-verifier apply-product-corrections
 ```
 
+Authorized EWG Skin Deep exports can be imported as a second catalog/enrichment source:
+
+```bash
+cd backend
+beauty-product-verifier import-ewg-skin-deep --source-path /path/to/ewg-export.jsonl --dry-run
+beauty-product-verifier import-ewg-skin-deep --source-path /path/to/ewg-export.jsonl --review-threshold 0.82
+```
+
+The importer stores raw EWG payloads, links them to products and ingredients, normalizes EWG categories, forms, body areas, certifications, claims, and concern buckets, and keeps source conflicts visible in product detail and `/admin/sources`.
+
+For local personal-use page collection, install the data extras and browser once:
+
+```bash
+cd backend
+python -m pip install -e ".[data]"
+python -m playwright install chromium
+beauty-product-verifier scrape-ewg-skin-deep --url "https://www.ewg.org/skindeep/browse/category/facial_moisturizer/" --max-products 25 --dry-run
+beauty-product-verifier scrape-ewg-skin-deep --all-categories --max-products 250 --browser-workers 3 --output-path storage/ewg-scrape.jsonl --dry-run
+```
+
+If EWG shows a browser challenge, rerun with `--headed` and the default persistent profile, clear the challenge manually during the `--challenge-wait-seconds` window, then rerun the same command without `--dry-run`. The scraper is rate-limited, can discover all Skin Deep beauty categories with `--all-categories`, uses bounded parallel browser pages with `--browser-workers`, stores raw parsed JSONL when `--output-path` is provided, imports product/ingredient facts into source-fusion tables, and stops instead of bypassing challenges.
+
 ## API Surface
 
 - `GET /api/v1/health`
@@ -101,6 +123,8 @@ beauty-product-verifier apply-product-corrections
 - `POST /api/v1/scans`
 - `GET /api/v1/scans/{scan_code}`
 - `GET /api/v1/sources`
+- `GET /api/v1/sources/terms`
+- `GET /api/v1/sources/conflicts`
 - `GET /api/v1/imports/status`
 
 ## CLI Commands
@@ -109,6 +133,8 @@ Install the backend package, then run:
 
 ```bash
 import-open-beauty-facts --help
+import-ewg-skin-deep --help
+scrape-ewg-skin-deep --help
 beauty-product-verifier backfill-open-beauty-facts-images --help
 enrich-ingredients --help
 beauty-product-verifier apply-product-corrections --help
@@ -117,7 +143,7 @@ refresh-risk-signals --help
 beauty-product-verifier --help
 ```
 
-The Open Beauty Facts importer prefers local bulk files (`.jsonl`, `.jsonl.gz`, `.parquet`) and only uses the live API for one-off barcode lookups during scans.
+The Open Beauty Facts importer prefers local bulk files (`.jsonl`, `.jsonl.gz`, `.parquet`) and only uses the live API for one-off barcode lookups during scans. The EWG file importer expects an authorized `.json`, `.jsonl`, `.csv`, or `.parquet` export. The browser scraper uses Playwright with a persistent Chromium profile, extracts browse/product/ingredient pages, and imports through the same source-fusion normalization path.
 
 ## Verification
 

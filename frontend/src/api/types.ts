@@ -38,6 +38,51 @@ export type ProductIngredient = {
   ingredient: IngredientSummary;
 };
 
+export type SourceLink = {
+  source_code: string;
+  source_name: string;
+  external_id: string;
+  source_url: string | null;
+  record_type: string;
+  match_method: string;
+  match_confidence: number;
+  source_updated_at: string | null;
+  active: boolean;
+};
+
+export type NormalizedAttribute = {
+  term_code: string;
+  term_type: string;
+  slug: string;
+  label: string;
+  source_codes: string[];
+  confidence_score: number;
+};
+
+export type SourceConflict = {
+  field: string;
+  display_value: string | null;
+  source_values: Array<{
+    source_code: string;
+    source_name: string;
+    value: string;
+    source_url: string | null;
+  }>;
+};
+
+export type SourceFact = {
+  fact_code: string;
+  source_code: string;
+  entity_kind: string;
+  fact_type: string;
+  field_name: string;
+  label: string | null;
+  value_text: string | null;
+  value_json: unknown;
+  source_url: string | null;
+  confidence_score: number;
+};
+
 export type Product = {
   product_code: string;
   barcode: string | null;
@@ -53,6 +98,11 @@ export type Product = {
 export type ProductDetail = Product & {
   categories: Array<{ category: { category_code: string; name: string; slug: string } }>;
   ingredients: ProductIngredient[];
+  source_links: SourceLink[];
+  normalized_attributes: NormalizedAttribute[];
+  source_conflicts: SourceConflict[];
+  source_facts: SourceFact[];
+  source_last_updated_at: string | null;
   last_source_update_at: string | null;
   created_at: string;
   updated_at: string;
@@ -182,4 +232,25 @@ export type ImportStatus = {
   source_records: number;
   risk_rules: number;
   scan_jobs: number;
+  product_source_links: number;
+  ingredient_source_links: number;
+  canonical_terms: number;
+  source_record_facts: number;
+  ewg_source_records: number;
+  source_conflict_products: number;
+};
+
+export type SourceTermSummary = {
+  term_code: string;
+  term_type: string;
+  slug: string;
+  label: string;
+  product_count: number;
+  ingredient_count: number;
+};
+
+export type SourceConflictProduct = {
+  product_code: string;
+  product_name: string;
+  source_conflicts: SourceConflict[];
 };

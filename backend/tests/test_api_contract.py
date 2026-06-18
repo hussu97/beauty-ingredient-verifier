@@ -26,6 +26,11 @@ def test_product_and_ingredient_detail(client):
     product = detail.json()
     assert product["product_code"] == product_code
     assert product["ingredients"]
+    assert "source_links" in product
+    assert "normalized_attributes" in product
+    assert "source_conflicts" in product
+    assert "source_facts" in product
+    assert "source_last_updated_at" in product
 
     ingredient_code = product["ingredients"][0]["ingredient"]["ingredient_code"]
     ingredient = client.get(f"/api/v1/ingredients/{ingredient_code}")
@@ -93,6 +98,14 @@ def test_import_status_and_sources(client):
     sources = client.get("/api/v1/sources")
     assert sources.status_code == 200
     assert any(source["source_code"] == "src_open_beauty_facts" for source in sources.json())
+
+    terms = client.get("/api/v1/sources/terms")
+    assert terms.status_code == 200
+    assert isinstance(terms.json(), list)
+
+    conflicts = client.get("/api/v1/sources/conflicts")
+    assert conflicts.status_code == 200
+    assert isinstance(conflicts.json(), list)
 
 
 def test_risk_evaluate(client, db_session: Session):

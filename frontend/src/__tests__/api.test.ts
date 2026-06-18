@@ -116,3 +116,29 @@ describe("directory API", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 });
+
+describe("source audit API", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("loads source terms and conflicts", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/sources/terms")) {
+        return new Response(JSON.stringify([{ term_code: "term_1", term_type: "concern" }]), { status: 200 });
+      }
+      if (url.includes("/sources/conflicts")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const terms = await api.sourceTerms();
+    const conflicts = await api.sourceConflicts();
+
+    expect(terms[0].term_code).toBe("term_1");
+    expect(conflicts).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});

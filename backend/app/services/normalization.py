@@ -4,19 +4,17 @@ import re
 import unicodedata
 
 
-TOKEN_RE = re.compile(r"[^a-z0-9]+")
+TOKEN_RE = re.compile(r"[^\w]+", flags=re.UNICODE)
+COMBINING_MARK_RE = re.compile(r"[\u0300-\u036f]+")
 
 
 def normalize_text(value: str | None) -> str:
     if not value:
         return ""
-    ascii_value = (
-        unicodedata.normalize("NFKD", value)
-        .encode("ascii", "ignore")
-        .decode("ascii")
-        .lower()
-    )
-    return TOKEN_RE.sub(" ", ascii_value).strip()
+    decomposed = unicodedata.normalize("NFKD", value)
+    without_marks = COMBINING_MARK_RE.sub("", decomposed)
+    normalized = unicodedata.normalize("NFKC", without_marks).lower().replace("_", " ")
+    return TOKEN_RE.sub(" ", normalized).strip()
 
 
 def slugify(value: str) -> str:
@@ -33,6 +31,15 @@ def split_ingredients(ingredient_text: str | None) -> list[str]:
     if not ingredient_text:
         return []
     text = ingredient_text.replace("\n", ",")
+    parts = [part.strip(" .;:") for part in text.split(",")]
+    return [part for part in parts if len(part) > 1]
+
+
+def split_ewg_ingredients(ingredient_text: str | None) -> list[str]:
+    if not ingredient_text:
+        return []
+    text = ingredient_text.replace("\n", ",")
+    text = re.sub(r"\s+[;/]\s+", ", ", text)
     parts = [part.strip(" .;:") for part in text.split(",")]
     return [part for part in parts if len(part) > 1]
 

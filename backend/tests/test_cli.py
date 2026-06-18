@@ -1,16 +1,26 @@
+import pytest
+
 from app import cli
 
 
-def test_single_command_entrypoints_prepend_typer_command(monkeypatch):
+@pytest.mark.parametrize(
+    ("entrypoint_name", "command_name"),
+    [
+        ("import_open_beauty_facts_entry", "import-open-beauty-facts"),
+        ("import_ewg_skin_deep_entry", "import-ewg-skin-deep"),
+        ("scrape_ewg_skin_deep_entry", "scrape-ewg-skin-deep"),
+    ],
+)
+def test_single_command_entrypoints_prepend_typer_command(monkeypatch, entrypoint_name, command_name):
     captured = {}
 
     def fake_app(**kwargs):
         captured.update(kwargs)
 
     monkeypatch.setattr(cli, "app", fake_app)
-    monkeypatch.setattr(cli.sys, "argv", ["import-open-beauty-facts", "--limit", "1"])
+    monkeypatch.setattr(cli.sys, "argv", [command_name, "--limit", "1"])
 
-    cli.import_open_beauty_facts_entry()
+    getattr(cli, entrypoint_name)()
 
-    assert captured["args"] == ["import-open-beauty-facts", "--limit", "1"]
-    assert captured["prog_name"] == "import-open-beauty-facts"
+    assert captured["args"] == [command_name, "--limit", "1"]
+    assert captured["prog_name"] == command_name

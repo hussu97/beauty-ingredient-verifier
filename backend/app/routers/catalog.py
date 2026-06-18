@@ -2,19 +2,28 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import Select, case, desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.db.models import Brand, Category, Product, ProductCategory, ProductIngredient
+from app.db.models import (
+    Brand,
+    Category,
+    Product,
+    ProductCategory,
+    ProductIngredient,
+    ProductSourceLink,
+    ProductTermLink,
+    SourceRecordFact,
+)
 from app.db.session import get_db
 from app.schemas import (
     CategoryOut,
     DirectoryGroupOut,
     DirectoryProductsIn,
     DirectoryProductsPageOut,
-    DirectoryProductRiskOut,
     ProductDetailOut,
     ProductListOut,
 )
 from app.services.normalization import normalize_text
 from app.services.risk import evaluate_loaded_product_risk
+from app.services.source_fusion import normalized_product_attributes, product_source_conflicts
 
 router = APIRouter(prefix="/products", tags=["catalog"])
 
@@ -26,6 +35,103 @@ def _product_options() -> tuple:
         selectinload(Product.ingredients).selectinload(ProductIngredient.ingredient),
         selectinload(Product.categories).selectinload(ProductCategory.category),
     )
+
+
+def _product_detail_options() -> tuple:
+    return (
+        *_product_options(),
+        selectinload(Product.source_links).selectinload(ProductSourceLink.source),
+        selectinload(Product.source_links).selectinload(ProductSourceLink.source_record),
+        selectinload(Product.term_links).selectinload(ProductTermLink.term),
+    )
+
+
+def _source_link_rows(product: Product) -> list[dict]:
+    rows = []
+    for link in sorted(product.source_links, key=lambda item: (item.source_code, item.external_id)):
+        rows.append(
+            {
+                "source_code": link.source_code,
+                "source_name": link.source.name if link.source else link.source_code,
+                "external_id": link.external_id,
+                "source_url": link.source_url,
+                "record_type": link.source_record.record_type if link.source_record else "unknown",
+                "match_method": link.match_method,
+                "match_confidence": link.match_confidence,
+                "source_updated_at": link.source_updated_at,
+                "active": link.active,
+            }
+        )
+    return rows
+
+
+def _source_fact_rows(db: Session, product: Product) -> list[dict]:
+    facts = db.scalars(
+        select(SourceRecordFact)
+        .where(SourceRecordFact.product_code == product.product_code)
+        .order_by(SourceRecordFact.fact_type, SourceRecordFact.field_name)
+        .limit(80)
+    ).all()
+    return [
+        {
+            "fact_code": fact.fact_code,
+            "source_code": fact.source_code,
+            "entity_kind": fact.entity_kind,
+            "fact_type": fact.fact_type,
+            "field_name": fact.field_name,
+            "label": fact.label,
+            "value_text": fact.value_text,
+            "value_json": fact.value_json,
+            "source_url": fact.source_url,
+            "confidence_score": fact.confidence_score,
+        }
+        for fact in facts
+    ]
+
+
+def _product_detail_payload(db: Session, product: Product) -> dict:
+    base = ProductListOut.model_validate(product).model_dump()
+    source_dates = [
+        date
+        for date in [product.last_source_update_at, *[link.source_updated_at for link in product.source_links]]
+        if date is not None
+    ]
+    return {
+        **base,
+        "categories": [
+            {"category": CategoryOut.model_validate(link.category).model_dump()}
+            for link in product.categories
+            if link.category
+        ],
+        "ingredients": [
+            {
+                **{
+                    "product_ingredient_code": link.product_ingredient_code,
+                    "raw_name": link.raw_name,
+                    "rank": link.rank,
+                    "percent_min": link.percent_min,
+                    "percent_max": link.percent_max,
+                    "percent_estimate": link.percent_estimate,
+                },
+                "ingredient": {
+                    "ingredient_code": link.ingredient.ingredient_code,
+                    "canonical_name": link.ingredient.canonical_name,
+                    "inci_name": link.ingredient.inci_name,
+                    "regulatory_status": link.ingredient.regulatory_status,
+                },
+            }
+            for link in product.ingredients
+            if link.ingredient
+        ],
+        "source_links": _source_link_rows(product),
+        "normalized_attributes": normalized_product_attributes(product),
+        "source_conflicts": product_source_conflicts(product),
+        "source_facts": _source_fact_rows(db, product),
+        "source_last_updated_at": max(source_dates) if source_dates else None,
+        "last_source_update_at": product.last_source_update_at,
+        "created_at": product.created_at,
+        "updated_at": product.updated_at,
+    }
 
 
 @router.get("", response_model=list[ProductListOut])
@@ -181,13 +287,13 @@ def product_count(db: Session = Depends(get_db)) -> dict[str, int]:
 
 
 @router.get("/{product_code}", response_model=ProductDetailOut)
-def get_product(product_code: str, db: Session = Depends(get_db)) -> Product:
+def get_product(product_code: str, db: Session = Depends(get_db)) -> dict:
     product = db.scalar(
-        select(Product).where(Product.product_code == product_code).options(*_product_options())
+        select(Product).where(Product.product_code == product_code).options(*_product_detail_options())
     )
     if product is None:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product
+    return _product_detail_payload(db, product)
 
 
 @router.get("/{product_code}/categories", response_model=list[CategoryOut])

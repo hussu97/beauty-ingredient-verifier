@@ -1,12 +1,24 @@
+import json
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Product, ProductImage, ProductIngredient, SourceRecord
+from app.db.models import (
+    CanonicalTerm,
+    Product,
+    ProductImage,
+    ProductIngredient,
+    ProductSourceLink,
+    SourceRecord,
+    SourceRecordFact,
+)
+from app.services.importers.ewg_skin_deep import import_ewg_skin_deep
 from app.services.importers.open_beauty_facts import (
     backfill_open_beauty_facts_images,
     import_open_beauty_facts,
     import_product_payload,
 )
+from app.services.risk import evaluate_product_risk
 from app.services.product_corrections import apply_source_backed_product_corrections
 
 
@@ -252,3 +264,104 @@ def test_backfill_open_beauty_facts_images_repairs_existing_source_records(db_se
     assert image.url == (
         "https://images.openbeautyfacts.org/images/products/400/590/010/7037/front_de.3.400.jpg"
     )
+
+
+def test_ewg_import_is_idempotent_and_links_source_terms(db_session: Session, tmp_path):
+    source_path = tmp_path / "ewg-products.jsonl"
+    payload = {
+        "ewg_product_id": "652656",
+        "source_url": "https://www.ewg.org/skindeep/products/652656-Test/",
+        "product_name": "Ultra-Hydrating Body Lotion",
+        "brand": "Norwex",
+        "category": "Moisturizer",
+        "product_form": "Cream",
+        "exposure_type": "Leave-on",
+        "body_area": ["skin", "face"],
+        "ewg_verified": True,
+        "hazard_score": 2,
+        "animal_testing_policy": "Unknown",
+        "data_last_updated": "February 2026",
+        "ingredients_from_packaging": "Water, Caprylohydroxamic Acid",
+        "ingredients": [
+            {"name": "Water", "functions": ["solvent"]},
+            {
+                "name": "Caprylohydroxamic Acid",
+                "functions": ["preservative"],
+                "concerns": [{"name": "Allergies/immunotoxicity", "level": "moderate"}],
+            },
+        ],
+    }
+    source_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    counts = import_ewg_skin_deep(db_session, str(source_path), limit=10)
+    db_session.commit()
+    second_counts = import_ewg_skin_deep(db_session, str(source_path), limit=10)
+    db_session.flush()
+
+    links = db_session.scalars(
+        select(ProductSourceLink).where(ProductSourceLink.source_code == "src_ewg_skin_deep")
+    ).all()
+    product = db_session.get(Product, links[0].product_code)
+    concern = db_session.scalar(
+        select(CanonicalTerm).where(
+            CanonicalTerm.term_type == "concern",
+            CanonicalTerm.slug == "allergy-immunotoxicity",
+        )
+    )
+
+    assert counts == {"products": 1, "ingredients": 0, "skipped": 0}
+    assert second_counts == {"products": 1, "ingredients": 0, "skipped": 0}
+    assert product is not None
+    assert len(links) == 1
+    assert links[0].match_method in {"new_ewg_product", "brand_name_ingredient_fuzzy"}
+    assert concern is not None
+    assert db_session.scalar(
+        select(func.count())
+        .select_from(SourceRecordFact)
+        .where(SourceRecordFact.source_code == "src_ewg_skin_deep")
+    )
+
+    result = evaluate_product_risk(db_session, product.product_code, {"skin_types": ["sensitive"]})
+    assert result["severity"] == "moderate"
+    assert any(match["evidence_kind"] == "ewg-skin-deep-concern" for match in result["matched_ingredients"])
+
+
+def test_ewg_import_merges_by_barcode_with_open_beauty_facts_product(db_session: Session, tmp_path):
+    existing = import_product_payload(
+        db_session,
+        {
+            "code": "0018787788059",
+            "product_name": "All-One Rose Pure-Castile Bar Soap",
+            "brands": "Dr. Bronner's",
+            "categories": "Hygiene, Soaps",
+            "categories_tags": ["en:hygiene", "en:soaps"],
+            "ingredients_text": "Organic Coconut Oil, Water, Natural Rose Fragrance",
+            "ingredients": [{"text": "Organic Coconut Oil", "rank": 1}],
+        },
+    )
+    db_session.flush()
+    assert existing is not None
+    source_path = tmp_path / "ewg-products.jsonl"
+    payload = {
+        "ewg_product_id": "barcode-match",
+        "barcode": "0018787788059",
+        "product_name": "All-One Rose Pure-Castile Bar Soap",
+        "brand": "Dr. Bronner's",
+        "category": "Bar Soap",
+        "ingredients": [{"name": "Organic Coconut Oil"}],
+    }
+    source_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    before_products = db_session.scalar(select(func.count()).select_from(Product))
+
+    import_ewg_skin_deep(db_session, str(source_path), limit=10)
+    db_session.flush()
+
+    product = db_session.scalar(select(Product).where(Product.barcode == "0018787788059"))
+    source_links = db_session.scalars(
+        select(ProductSourceLink).where(ProductSourceLink.product_code == product.product_code)
+    ).all()
+
+    assert db_session.scalar(select(func.count()).select_from(Product)) == before_products
+    assert product is not None
+    assert {link.source_code for link in source_links} >= {"src_open_beauty_facts", "src_ewg_skin_deep"}
+    assert any(link.match_method == "barcode_exact" for link in source_links)
