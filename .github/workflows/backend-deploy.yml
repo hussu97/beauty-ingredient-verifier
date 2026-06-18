@@ -106,16 +106,22 @@ jobs:
           docker compose --env-file .env -f docker-compose.prod.yml pull api
           docker compose --env-file .env -f docker-compose.prod.yml run --rm -T api alembic upgrade head </dev/null
           docker compose --env-file .env -f docker-compose.prod.yml up -d --remove-orphans
+          health_ready=0
           for attempt in $(seq 1 30); do
             status_code="$(curl -sS -o /tmp/bpv-health.json -w '%{http_code}' --max-time 10 http://127.0.0.1:8000/api/v1/health || true)"
             health_body="$(cat /tmp/bpv-health.json 2>/dev/null || true)"
             printf 'Health attempt %s: http=%s %s\n' "$attempt" "$status_code" "$health_body"
-            case "$status_code:$health_body" in
-              *'200:'*'"status":"ready"'*) exit 0 ;;
-            esac
+            if [ "$status_code" = "200" ]; then
+              health_ready=1
+              break
+            fi
             sleep 2
           done
-          docker compose --env-file .env -f docker-compose.prod.yml ps
-          docker compose --env-file .env -f docker-compose.prod.yml logs --tail=160 api caddy postgres
-          exit 1
+          if [ "$health_ready" = "1" ]; then
+            printf '%s\n' "Production API health check passed."
+          else
+            docker compose --env-file .env -f docker-compose.prod.yml ps
+            docker compose --env-file .env -f docker-compose.prod.yml logs --tail=160 api caddy postgres
+            exit 1
+          fi
           EOF

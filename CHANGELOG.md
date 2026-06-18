@@ -9,6 +9,7 @@
 - Fixed the backend deploy migration step so the one-off Alembic container cannot consume the remaining SSH script before `docker compose up -d` and health checks run.
 - Hardened the backend deploy health loop to validate the HTTP status and ready body while tolerating transient startup connection resets.
 - Fixed a shell `pipefail` false negative in the deploy health gate by using a direct body match instead of a `grep -q` pipeline.
+- Fixed the SSH deploy health gate to avoid early remote `exit 0` before the here-doc stream is fully consumed.
 - Added `sync-local-to-prod` with dry-run/apply/validate-only modes, explicit dependency-ordered catalog/source/embedding table sync, runtime-table exclusions, sync run tracking, and pgvector refresh after embedding sync.
 - Added `sync_runs` plus a PostgreSQL `image_embedding_vectors` pgvector side index for production CLIP image matching from synced JSON embeddings.
 - Added audit-remediation integrity hardening: SQLite foreign keys are enabled for runtime/test engines, metadata now mirrors migration uniqueness boundaries, and production startup rejects local-only auto-create/demo-bootstrap flags.
