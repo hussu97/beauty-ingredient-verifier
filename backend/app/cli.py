@@ -23,6 +23,7 @@ from app.services.importers.open_beauty_facts import (
     import_open_beauty_facts,
 )
 from app.services.importers.ewg_skin_deep import import_ewg_skin_deep
+from app.services.importers.ewg_wayback import import_ewg_from_wayback
 from app.services.importers.ewg_public_scraper import (
     DEFAULT_USER_AGENT,
     EwgScrapeBlocked,
@@ -233,6 +234,53 @@ def scrape_ewg_skin_deep_command(
     )
 
 
+@app.command("import-ewg-wayback")
+def import_ewg_wayback_command(
+    max_products: int = typer.Option(100, "--max-products", min=0),
+    max_ingredients: int = typer.Option(0, "--max-ingredients", min=0),
+    scrape_ingredients: bool = typer.Option(
+        False,
+        "--scrape-ingredients/--no-scrape-ingredients",
+        help="Also import standalone EWG ingredient pages from the archive.",
+    ),
+    from_date: str | None = typer.Option(
+        None,
+        "--from-date",
+        help="Optional CDX 'from' filter (e.g. 2023) to prefer recent captures.",
+    ),
+    request_delay: float = typer.Option(0.5, "--request-delay", min=0.0),
+    review_threshold: float = typer.Option(0.82, "--review-threshold", min=0.0, max=1.0),
+    output_path: Path | None = typer.Option(
+        None,
+        "--output-path",
+        help="Optional JSONL file to append parsed payloads before import.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Parse without writing to the database."),
+) -> None:
+    """Import EWG Skin Deep from the Wayback Machine (no Cloudflare, no browser).
+
+    EWG Skin Deep is entirely a cosmetics/beauty database, so this imports beauty
+    products directly from archive.org's mirror of every product page.
+    """
+    with _session() as db:
+        counts = import_ewg_from_wayback(
+            db,
+            max_products=max_products,
+            max_ingredients=max_ingredients,
+            scrape_ingredients=scrape_ingredients,
+            review_threshold=review_threshold,
+            dry_run=dry_run,
+            output_path=output_path,
+            request_delay=request_delay,
+            from_date=from_date,
+        )
+        if dry_run:
+            db.rollback()
+        else:
+            db.commit()
+    console.print_json(data=counts | {"dry_run": dry_run})
+
+
 @app.command("enrich-ingredients")
 def enrich_ingredients_command(
     pubchem_live: bool = typer.Option(False, "--pubchem-live", help="Enable live PubChem lookups."),
@@ -364,6 +412,10 @@ def import_ewg_skin_deep_entry() -> None:
 
 def scrape_ewg_skin_deep_entry() -> None:
     _run_single_command("scrape-ewg-skin-deep")
+
+
+def import_ewg_wayback_entry() -> None:
+    _run_single_command("import-ewg-wayback")
 
 
 def index_images_entry() -> None:

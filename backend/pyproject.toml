@@ -29,6 +29,7 @@ dev = [
   "ruff>=0.5"
 ]
 data = [
+  "beautifulsoup4>=4.12",
   "patchright>=1.48",
   "playwright>=1.48",
   "pyarrow>=16.0",
@@ -52,6 +53,7 @@ postgres = [
 beauty-product-verifier = "app.cli:main"
 import-open-beauty-facts = "app.cli:import_open_beauty_facts_entry"
 import-ewg-skin-deep = "app.cli:import_ewg_skin_deep_entry"
+import-ewg-wayback = "app.cli:import_ewg_wayback_entry"
 scrape-ewg-skin-deep = "app.cli:scrape_ewg_skin_deep_entry"
 backfill-open-beauty-facts-images = "app.cli:backfill_open_beauty_facts_images_entry"
 enrich-ingredients = "app.cli:enrich_ingredients_entry"

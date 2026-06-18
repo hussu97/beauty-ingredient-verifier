@@ -141,6 +141,40 @@ def test_link_discovery_and_challenge_detection():
     )
 
 
+def test_wayback_snapshot_and_junk_filters():
+    from app.services.importers.ewg_wayback import (
+        _looks_like_junk,
+        is_generic_listing,
+        snapshot_from_html,
+    )
+
+    html = """
+    <html><head><title>EWG Skin Deep® | Example Cream</title></head>
+    <body>
+      <h1>Example Cream</h1>
+      <img src="/web/20240101000000im_/https://www.ewg.org/score.png" alt="Product score: 03"/>
+      <a href="/web/20240101id_/https://www.ewg.org/skindeep/ingredients/700000-WATER/">Water</a>
+    </body></html>
+    """
+    snapshot = snapshot_from_html(html, "https://www.ewg.org/skindeep/products/123-Example_Cream/")
+    assert snapshot.title == "EWG Skin Deep® | Example Cream"
+    assert snapshot.h1 == "Example Cream"
+    # Wayback prefixes are stripped from links and image sources.
+    assert snapshot.images[0]["src"] == "https://www.ewg.org/score.png"
+    assert snapshot.links[0]["href"] == "https://www.ewg.org/skindeep/ingredients/700000-WATER/"
+    assert not is_generic_listing(snapshot)
+
+    generic = snapshot_from_html(
+        "<html><head><title>EWG Skin Deep® Cosmetics Database</title></head><body></body></html>",
+        "https://www.ewg.org/skindeep/products/1-Gone/",
+    )
+    assert is_generic_listing(generic)
+
+    assert _looks_like_junk("https://www.ewg.org/skindeep/products/9-X-height=440/")
+    assert _looks_like_junk("https://www.ewg.org/skindeep/products/gtm.js")
+    assert not _looks_like_junk("https://www.ewg.org/skindeep/products/999984-Real_Product/")
+
+
 def test_parse_proxy_variants():
     assert _parse_proxy(None) is None
     assert _parse_proxy("http://u:p@1.2.3.4:8080") == {
