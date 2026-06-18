@@ -445,14 +445,24 @@ async def _attempt_turnstile_click(page) -> bool:
     )
     if frame is None:
         return False
+    # Preferred: click the real checkbox element inside the Turnstile frame. This
+    # is far more reliable than guessing coordinates and adapts to layout shifts.
+    for selector in ("input[type=checkbox]", "label"):
+        try:
+            locator = frame.locator(selector)
+            if await locator.count():
+                await locator.first.click(timeout=5000)
+                return True
+        except Exception:
+            continue
+    # Fallback: move the mouse to the checkbox region and click by coordinates.
     try:
         owner = await frame.frame_element()
         box = await owner.bounding_box()
         if not box:
             return False
-        # The checkbox sits near the left edge, vertically centered.
-        x = box["x"] + 27
-        y = box["y"] + box["height"] / 2
+        x = box["x"] + 30
+        y = box["y"] + 30  # checkbox sits ~30px from the frame's top-left
         await page.mouse.move(x - random.randint(30, 60), y - random.randint(5, 15), steps=10)
         await page.mouse.move(x, y, steps=random.randint(8, 14))
         await page.wait_for_timeout(random.randint(200, 450))
@@ -495,6 +505,29 @@ def _ensure_async_playwright() -> tuple[Any, str]:
         ) from exc
 
 
+def _parse_proxy(proxy_url: str | None) -> dict[str, str] | None:
+    """Turn a ``scheme://user:pass@host:port`` URL into Playwright proxy kwargs.
+
+    A clean (e.g. residential) egress IP is the most reliable way past a Cloudflare
+    Turnstile challenge once the default IP's reputation has been flagged.
+    """
+    if not proxy_url:
+        return None
+    parsed = urlparse(proxy_url)
+    if not parsed.hostname:
+        raise ValueError(f"Invalid proxy URL: {proxy_url!r}")
+    scheme = parsed.scheme or "http"
+    server = f"{scheme}://{parsed.hostname}"
+    if parsed.port:
+        server += f":{parsed.port}"
+    proxy: dict[str, str] = {"server": server}
+    if parsed.username:
+        proxy["username"] = parsed.username
+    if parsed.password:
+        proxy["password"] = parsed.password
+    return proxy
+
+
 def _empty_counts() -> dict[str, int]:
     return {
         "pages_seen": 0,
@@ -524,8 +557,10 @@ async def _collect_ewg_payloads(
     user_agent: str = DEFAULT_USER_AGENT,
     locale: str = DEFAULT_LOCALE,
     timezone_id: str = DEFAULT_TIMEZONE,
+    proxy_url: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     async_playwright, engine = _ensure_async_playwright()
+    proxy = _parse_proxy(proxy_url)
     workers = max(1, min(browser_workers, 8))
     counts = _empty_counts()
     lock = asyncio.Lock()
@@ -576,6 +611,9 @@ async def _collect_ewg_payloads(
         # The full Chromium build's "new" headless mode is far less detectable than
         # the default headless_shell. Prefer channel="chromium", then the bundled build.
         channels_to_try = ["chromium", None]
+
+    if proxy:
+        launch_kwargs["proxy"] = proxy
 
     async with async_playwright() as playwright:
         context = None
@@ -835,6 +873,7 @@ def scrape_ewg_skin_deep(
     user_agent: str = DEFAULT_USER_AGENT,
     locale: str = DEFAULT_LOCALE,
     timezone_id: str = DEFAULT_TIMEZONE,
+    proxy_url: str | None = None,
 ) -> dict[str, int]:
     product_payloads, ingredient_payloads, counts = asyncio.run(
         _collect_ewg_payloads(
@@ -852,6 +891,7 @@ def scrape_ewg_skin_deep(
             user_agent=user_agent,
             locale=locale,
             timezone_id=timezone_id,
+            proxy_url=proxy_url,
         )
     )
     if output_path:

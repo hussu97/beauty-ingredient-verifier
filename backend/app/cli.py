@@ -150,6 +150,15 @@ def scrape_ewg_skin_deep_command(
         "--user-agent",
         help="Override the browser user agent. Defaults to a current desktop Chrome UA.",
     ),
+    proxy: str | None = typer.Option(
+        None,
+        "--proxy",
+        help=(
+            "Route the browser through a proxy, e.g. http://user:pass@host:port. "
+            "A clean residential IP is the most reliable way past Cloudflare once the "
+            "default IP's reputation is flagged."
+        ),
+    ),
     delay_seconds: float = typer.Option(2.0, "--delay-seconds", min=0.5),
     browser_workers: int = typer.Option(
         1,
@@ -194,6 +203,7 @@ def scrape_ewg_skin_deep_command(
                 include_category_links=all_categories,
                 challenge_wait_seconds=challenge_wait_seconds,
                 user_agent=user_agent or DEFAULT_USER_AGENT,
+                proxy_url=proxy,
             )
         except EwgScrapeBlocked as exc:
             db.rollback()
