@@ -68,7 +68,7 @@ Each step contributes reasons and confidence. Text search uses indexed database 
 
 ## Deployment Architecture
 
-The frontend deploys from `frontend/` to Vercel with `VITE_API_BASE_URL` pointing at the production API. The backend deploys to one GCP VM through Docker Compose: `api`, `postgres` (`pgvector/pgvector:pg16`), and `caddy`. GitHub Actions builds the API image with Docker Buildx and the GitHub Actions cache backend before pushing to GHCR, runs Alembic in a noninteractive one-off container, then starts the long-running Compose services and requires a ready API health response. The API image installs only API/runtime dependencies plus barcode and CLIP serving packages; scraping and indexing packages live in separate local pipeline images.
+The frontend deploys from `frontend/` to Vercel with `VITE_API_BASE_URL` pointing at the production API. The backend deploys to one GCP VM through Docker Compose: `api`, `postgres` (`pgvector/pgvector:pg16`), and `caddy`. GitHub Actions builds the API image with Docker Buildx and the GitHub Actions cache backend before pushing to GHCR, runs Alembic in a noninteractive one-off container, then starts the long-running Compose services and requires a ready API health response while tolerating first-start connection resets. The API image installs only API/runtime dependencies plus barcode and CLIP serving packages; scraping and indexing packages live in separate local pipeline images.
 
 Local SQLite is canonical for scraper/indexer-owned tables. Production catalog/source/embedding tables are read-only to the API and are changed only by `sync-local-to-prod`. Production scan/runtime rows remain production-local and are never backfilled from local pipeline databases.
 

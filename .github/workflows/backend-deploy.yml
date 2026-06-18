@@ -110,9 +110,9 @@ jobs:
             status_code="$(curl -sS -o /tmp/bpv-health.json -w '%{http_code}' --max-time 10 http://127.0.0.1:8000/api/v1/health || true)"
             health_body="$(cat /tmp/bpv-health.json 2>/dev/null || true)"
             printf 'Health attempt %s: http=%s %s\n' "$attempt" "$status_code" "$health_body"
-            if [ "$status_code" = "200" ] && printf '%s' "$health_body" | grep -q '"status":"ready"'; then
-              exit 0
-            fi
+            case "$status_code:$health_body" in
+              *'200:'*'"status":"ready"'*) exit 0 ;;
+            esac
             sleep 2
           done
           docker compose --env-file .env -f docker-compose.prod.yml ps
