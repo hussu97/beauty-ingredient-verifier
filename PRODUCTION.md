@@ -56,7 +56,7 @@ BPV_ENABLE_SQLITE_VEC=false
 
 ## GitHub Actions Deploy
 
-`.github/workflows/backend-deploy.yml` runs backend tests, builds `backend/Dockerfile`, pushes the API image to GHCR, copies deployment files to `/opt/bpv`, writes `/opt/bpv/.env` from GitHub Secrets, runs Alembic, restarts Compose, and smokes `GET /api/v1/health`.
+`.github/workflows/backend-deploy.yml` runs backend tests, sets up Docker Buildx with the GitHub Actions cache backend, builds `backend/Dockerfile`, pushes the API image to GHCR, copies deployment files to `/opt/bpv`, writes `/opt/bpv/.env` from GitHub Secrets, runs Alembic, restarts Compose, and smokes `GET /api/v1/health`.
 
 Required GitHub Secrets:
 
