@@ -140,7 +140,9 @@ def _product_detail_payload(db: Session, product: Product) -> dict:
 
 def _directory_product_options() -> tuple:
     return (
-        *_product_options(),
+        selectinload(Product.brand),
+        selectinload(Product.images),
+        selectinload(Product.categories).selectinload(ProductCategory.category),
         selectinload(Product.source_links).selectinload(ProductSourceLink.source),
     )
 
