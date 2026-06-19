@@ -1,7 +1,5 @@
-from collections import defaultdict
-
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Select, case, desc, func, or_, select
+from sqlalchemy import Select, desc, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import (
@@ -19,14 +17,13 @@ from app.db.session import get_db
 from app.schemas import (
     CategoryOut,
     DirectoryFacetOut,
-    DirectoryGroupOut,
     DirectoryProductsIn,
     DirectoryProductsPageOut,
     ProductDetailOut,
     ProductListOut,
 )
 from app.services.normalization import normalize_text
-from app.services.risk import SEVERITY_LABELS, _rule_applies
+from app.services.risk import SEVERITY_LABELS
 from app.services.source_fusion import normalized_product_attributes, product_source_conflicts
 
 router = APIRouter(prefix="/products", tags=["catalog"])
@@ -198,10 +195,6 @@ def _directory_filters(
 def _coerce_directory_payload(payload: DirectoryProductsIn) -> DirectoryProductsIn:
     payload.brand_codes = _normalized_codes(payload.brand_codes)
     payload.category_codes = _normalized_codes(payload.category_codes)
-    if payload.group_kind == "brand" and payload.group_code:
-        payload.brand_codes = _normalized_codes([*payload.brand_codes, payload.group_code])
-    if payload.group_kind == "category" and payload.group_code:
-        payload.category_codes = _normalized_codes([*payload.category_codes, payload.group_code])
     return payload
 
 
@@ -217,45 +210,6 @@ def _source_labels(product: Product) -> list[str]:
 def _category_labels(product: Product) -> list[str]:
     labels = {link.category.name for link in product.categories if link.category}
     return sorted(labels)
-
-
-def _risk_summaries(db: Session, products: list[Product], profile: dict) -> dict[str, dict]:
-    ingredient_codes = sorted(
-        {
-            link.ingredient_code
-            for product in products
-            for link in product.ingredients
-            if link.ingredient_code
-        }
-    )
-    if ingredient_codes:
-        rules = db.scalars(
-            select(RiskRule)
-            .where(RiskRule.ingredient_code.in_(ingredient_codes), RiskRule.active.is_(True))
-            .options(selectinload(RiskRule.ingredient))
-        ).all()
-    else:
-        rules = []
-    rules_by_ingredient: dict[str, list[RiskRule]] = defaultdict(list)
-    for rule in rules:
-        rules_by_ingredient[rule.ingredient_code].append(rule)
-
-    summaries = {}
-    for product in products:
-        candidate_rules = [
-            rule
-            for ingredient in product.ingredients
-            for rule in rules_by_ingredient.get(ingredient.ingredient_code, [])
-        ]
-        matched = [rule for rule in candidate_rules if _rule_applies(rule, product, profile)]
-        score = max([rule.severity_score for rule in matched], default=0)
-        summaries[product.product_code] = {
-            "severity": SEVERITY_LABELS.get(score, "unknown"),
-            "score": score,
-            "matched_ingredient_count": len({rule.ingredient_code for rule in matched}),
-            "side_effects": sorted({effect for rule in matched for effect in rule.side_effects}),
-        }
-    return summaries
 
 
 def _directory_risk_summaries(db: Session, product_codes: list[str]) -> dict[str, dict]:
@@ -381,85 +335,6 @@ def list_products(
     return list(db.scalars(stmt).unique().all())
 
 
-@router.get("/directory/groups", response_model=list[DirectoryGroupOut])
-def list_directory_groups(
-    kind: str = Query(default="brand", pattern="^(brand|category)$"),
-    q: str | None = Query(default=None),
-    limit: int = Query(default=80, ge=1, le=200),
-    db: Session = Depends(get_db),
-) -> list[DirectoryGroupOut]:
-    if kind == "brand":
-        stmt = (
-            select(Brand, func.count(Product.product_code).label("product_count"))
-            .join(Product, Product.brand_code == Brand.brand_code)
-        )
-        if q:
-            normalized_query = normalize_text(q)
-            normalized = f"%{normalized_query}%"
-            prefix = f"{normalized_query}%"
-            stmt = stmt.where(Brand.normalized_name.like(normalized))
-            order_by = (
-                case((Brand.normalized_name == normalized_query, 0), else_=1),
-                case((Brand.normalized_name.like(prefix), 0), else_=1),
-                desc("product_count"),
-                Brand.name,
-            )
-        else:
-            order_by = (desc("product_count"), Brand.name)
-        rows = db.execute(
-            stmt
-            .group_by(Brand.brand_code)
-            .order_by(*order_by)
-            .limit(limit)
-        ).all()
-        return [
-            DirectoryGroupOut(
-                kind="brand",
-                code=brand.brand_code,
-                name=brand.name,
-                product_count=product_count,
-            )
-            for brand, product_count in rows
-        ]
-
-    stmt = (
-        select(Category, func.count(ProductCategory.product_code).label("product_count"))
-        .join(ProductCategory, ProductCategory.category_code == Category.category_code)
-    )
-    if q:
-        normalized_query = normalize_text(q)
-        normalized = f"%{normalized_query}%"
-        prefix = f"{normalized_query}%"
-        category_name = func.lower(Category.name)
-        stmt = stmt.where((Category.slug.like(normalized)) | (category_name.like(normalized)))
-        order_by = (
-            case((Category.slug == normalized_query, 0), else_=1),
-            case((category_name == normalized_query, 0), else_=1),
-            case((Category.slug.like(prefix), 0), else_=1),
-            case((category_name.like(prefix), 0), else_=1),
-            desc("product_count"),
-            Category.name,
-        )
-    else:
-        order_by = (desc("product_count"), Category.name)
-    rows = db.execute(
-        stmt
-        .group_by(Category.category_code)
-        .order_by(*order_by)
-        .limit(limit)
-    ).all()
-    return [
-        DirectoryGroupOut(
-            kind="category",
-            code=category.category_code,
-            name=category.name,
-            slug=category.slug,
-            product_count=product_count,
-        )
-        for category, product_count in rows
-    ]
-
-
 @router.post("/directory/products", response_model=DirectoryProductsPageOut)
 def list_directory_products(payload: DirectoryProductsIn, db: Session = Depends(get_db)) -> dict:
     payload = _coerce_directory_payload(payload)
@@ -534,13 +409,3 @@ def get_product(product_code: str, db: Session = Depends(get_db)) -> dict:
     if product is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return _product_detail_payload(db, product)
-
-
-@router.get("/{product_code}/categories", response_model=list[CategoryOut])
-def get_product_categories(product_code: str, db: Session = Depends(get_db)) -> list[CategoryOut]:
-    product = db.scalar(
-        select(Product).where(Product.product_code == product_code).options(selectinload(Product.categories).selectinload(ProductCategory.category))
-    )
-    if product is None:
-        raise HTTPException(status_code=404, detail="Product not found")
-    return [CategoryOut.model_validate(link.category) for link in product.categories]

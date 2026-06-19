@@ -126,7 +126,6 @@ The directory PLP API keeps listing work bounded: it paginates with indexed prod
 
 - `GET /api/v1/health`
 - `GET /api/v1/products`
-- `GET /api/v1/products/directory/groups` - legacy brand/category group lookup with `kind`, optional `q`, and `limit`.
 - `POST /api/v1/products/directory/products` - unified PLP listing with search, `brand_codes`, `category_codes`, `sort`, pagination, and brand/category facet counts.
 - `GET /api/v1/products/{product_code}`
 - `GET /api/v1/ingredients`

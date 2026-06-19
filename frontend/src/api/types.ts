@@ -108,15 +108,12 @@ export type ProductDetail = Product & {
   updated_at: string;
 };
 
-export type DirectoryGroup = {
+export type DirectoryFacet = {
   kind: "brand" | "category";
   code: string;
   name: string;
   slug: string | null;
   product_count: number;
-};
-
-export type DirectoryFacet = DirectoryGroup & {
   selected: boolean;
 };
 

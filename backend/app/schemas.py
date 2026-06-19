@@ -146,15 +146,12 @@ class ProductDetailOut(ProductListOut):
     updated_at: datetime
 
 
-class DirectoryGroupOut(BaseModel):
+class DirectoryFacetOut(BaseModel):
     kind: str
     code: str
     name: str
     slug: str | None = None
     product_count: int
-
-
-class DirectoryFacetOut(DirectoryGroupOut):
     selected: bool = False
 
 
@@ -218,8 +215,6 @@ class ClinicalProfile(BaseModel):
 
 
 class DirectoryProductsIn(BaseModel):
-    group_kind: str | None = Field(default=None, pattern="^(brand|category)$")
-    group_code: str | None = None
     q: str | None = None
     brand_codes: list[str] = Field(default_factory=list)
     category_codes: list[str] = Field(default_factory=list)
