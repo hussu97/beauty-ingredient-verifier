@@ -168,6 +168,8 @@ If validation reports row-count mismatches, inspect whether production has stale
 
 The directory PLP endpoint (`POST /api/v1/products/directory/products`) should stay responsive on the full catalog. Its default listing uses indexed product pagination and computes compact risk summaries only for the returned page instead of running a production-wide product/ingredient/risk-rule group-by before pagination.
 
+The PDP risk endpoint (`POST /api/v1/risk/evaluate`) computes from synced catalog/rule tables and writes `risk_evaluations` only as a best-effort runtime audit row. A failed audit insert should not surface as a PDP 500; check Sentry/database logs and migrations if audit rows stop appearing.
+
 ## Backup And Restore
 
 Back up the production database before large syncs:

@@ -1,3 +1,4 @@
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.db.models import RiskRule
@@ -166,6 +167,70 @@ def test_fragrance_pattern_rule_matches_natural_fragrance_ingredient(db_session:
     assert result["severity"] == "moderate"
     assert any(item["ingredient_name"] == "Natural Rose Fragrance" for item in result["matched_ingredients"])
     assert all(item["source_url"] for item in result["matched_ingredients"])
+
+
+def test_evaluation_tolerates_malformed_rule_side_effects(db_session: Session):
+    product = import_product_payload(
+        db_session,
+        {
+            "code": "risk-fragrance-null-effects",
+            "product_name": "Rose face cream",
+            "brands": "Rule Test Lab",
+            "categories": "Skin care, Face cream",
+            "categories_tags": ["en:skin-care", "en:face-cream"],
+            "ingredients_text": "Aqua, Natural Rose Fragrance",
+            "ingredients": [{"text": "Aqua", "rank": 1}, {"text": "Natural Rose Fragrance", "rank": 2}],
+        },
+    )
+    seed_reference_sources_and_rules(db_session)
+    db_session.flush()
+    rules = db_session.query(RiskRule).filter(RiskRule.title == "Fragrance allergen sensitivity").all()
+    assert rules
+    for rule in rules:
+        rule.side_effects = None
+
+    result = evaluate_product_risk(
+        db_session,
+        product.product_code,
+        {"sensitivities": ["fragrance"], "skin_types": ["sensitive"]},
+    )
+
+    assert result["severity"] == "moderate"
+    assert result["side_effects"] == []
+    assert result["matched_ingredients"][0]["side_effects"] == []
+
+
+def test_evaluation_returns_result_when_audit_persistence_fails(db_session: Session, monkeypatch):
+    product = import_product_payload(
+        db_session,
+        {
+            "code": "risk-fragrance-audit-failure",
+            "product_name": "Rose face cream",
+            "brands": "Rule Test Lab",
+            "categories": "Skin care, Face cream",
+            "categories_tags": ["en:skin-care", "en:face-cream"],
+            "ingredients_text": "Aqua, Natural Rose Fragrance",
+            "ingredients": [{"text": "Aqua", "rank": 1}, {"text": "Natural Rose Fragrance", "rank": 2}],
+        },
+    )
+    seed_reference_sources_and_rules(db_session)
+    db_session.flush()
+    product_code = product.product_code
+
+    def fail_flush(*_args, **_kwargs):
+        raise SQLAlchemyError("audit table unavailable")
+
+    monkeypatch.setattr(db_session, "flush", fail_flush)
+
+    result = evaluate_product_risk(
+        db_session,
+        product_code,
+        {"sensitivities": ["fragrance"], "skin_types": ["sensitive"]},
+    )
+
+    assert result["product_code"] == product_code
+    assert result["severity"] == "moderate"
+    assert result["matched_ingredients"]
 
 
 def test_product_metadata_gates_formaldehyde_hair_smoothing_rule(db_session: Session):

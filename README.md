@@ -131,7 +131,7 @@ The directory PLP API keeps listing work bounded: it paginates with indexed prod
 - `GET /api/v1/products/{product_code}`
 - `GET /api/v1/ingredients`
 - `GET /api/v1/ingredients/{ingredient_code}`
-- `POST /api/v1/risk/evaluate`
+- `POST /api/v1/risk/evaluate` - profile-aware product risk evaluation; audit persistence is best-effort so product detail pages can still render computed warnings if a runtime audit write fails.
 - `POST /api/v1/scans`
 - `GET /api/v1/scans/{scan_code}`
 - `GET /api/v1/sources`

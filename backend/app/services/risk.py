@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import Product, RiskEvaluation, RiskRule, SourceRecord
@@ -91,6 +91,13 @@ def _product_filters_apply(product: Product, applies_to: dict[str, Any]) -> bool
     return True
 
 
+def _rule_side_effects(rule: RiskRule) -> list[str]:
+    side_effects = rule.side_effects
+    if not isinstance(side_effects, list):
+        return []
+    return [str(effect).strip() for effect in side_effects if str(effect).strip()]
+
+
 def _rule_applies(rule: RiskRule, product: Product, profile: dict[str, Any]) -> bool:
     applies_to = rule.applies_to or {}
     if not applies_to:
@@ -132,7 +139,7 @@ def evaluate_loaded_product_risk(
     score = max([rule.severity_score for rule in matched], default=0)
     severity = SEVERITY_LABELS.get(score, "unknown")
     matched_rule_codes = [rule.risk_rule_code for rule in matched]
-    side_effects = sorted({effect for rule in matched for effect in rule.side_effects})
+    side_effects = sorted({effect for rule in matched for effect in _rule_side_effects(rule)})
     source_records = {
         record.source_record_code: record
         for record in db.scalars(
@@ -153,8 +160,8 @@ def evaluate_loaded_product_risk(
                 "summary": rule.summary,
                 "severity": rule.severity,
                 "severity_score": rule.severity_score,
-                "side_effects": rule.side_effects,
-                "confidence_score": rule.confidence_score,
+                "side_effects": _rule_side_effects(rule),
+                "confidence_score": rule.confidence_score or 0,
                 "evidence_kind": rule.evidence_kind,
                 "source_record_code": rule.source_record_code,
                 "source_url": record.source_url if record else None,
@@ -180,7 +187,7 @@ def evaluate_loaded_product_risk(
         try:
             db.flush()
             evaluation_code = evaluation.evaluation_code
-        except OperationalError:
+        except SQLAlchemyError:
             db.rollback()
     return {
         "evaluation_code": evaluation_code,

@@ -106,3 +106,5 @@ Rules do not score by gender, nationality, ethnicity, or unsupported demographic
 Backend tests audit every trusted risk-rule profile value against the shared profile vocabulary, every selectable value against at least one source-backed rule, and every rule value/alias against a matching product fixture.
 
 Directory product listing uses the same rule matcher as product risk evaluation on the returned page, but does not persist `risk_evaluations`; persisted evaluations are reserved for explicit product evaluation flows.
+
+Explicit product risk evaluation persists `risk_evaluations` as a best-effort audit record. If that runtime write fails, the API still returns the computed source-backed warning result, and source-derived JSON list fields are normalized before response serialization so malformed optional rule metadata does not break PDP rendering.
