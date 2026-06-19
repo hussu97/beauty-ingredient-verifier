@@ -3,17 +3,21 @@
 ## 2026-06-19
 
 ### Backend
+- Added production-only Sentry initialization for the FastAPI app with environment, release, trace, and profiling configuration.
 - Reworked `POST /products/directory/products` into the unified directory listing endpoint with search, multi-brand filters, multi-category filters, sort, pagination, source/category labels, and brand/category facet counts.
 - Reduced PLP query fanout by using SQLAlchemy filtered/grouped queries plus select-in eager loading and batch risk summary calculation for returned page products.
 - Added bounded Wayback CDX discovery retries to the EWG importer via `--cdx-timeout` and `--cdx-max-failures`, so archive.org outages abort cleanly and can be resumed instead of hanging indefinitely.
 
 ### Frontend
+- Added production-only Sentry initialization for React with a top-level error boundary and trace sample-rate configuration.
 - Replaced the old separate brand/category directory selector with a single ecommerce-style PLP containing search, facet filters with counts, sort controls, pagination, product images, source labels, and profile-aware warning badges.
 
 ### Docs
-- Updated README, ARCHITECTURE, and PRODUCTION to document the single PLP endpoint and note that no new environment variables are required.
+- Documented Sentry production DSNs, environment variables, deploy wiring, and default local-disabled behavior.
+- Updated README, ARCHITECTURE, and PRODUCTION to document the single PLP endpoint and the new production Sentry configuration.
 
 ### Tests
+- Added backend and frontend coverage for production-only Sentry initialization and sampling config.
 - Added backend coverage for directory filters, sort, selected facets, and facet counts.
 - Added frontend coverage for the unified directory API payload and PLP control rendering.
 
@@ -24,6 +28,7 @@
 - Added opt-in target-table watermark fallback for already-bootstrapped production databases that do not yet have `sync_runs` history, avoiding unnecessary full re-upserts after counts are validated.
 - Added database indexes on sync watermark timestamp columns so dry-run/apply delta selection avoids full scans on large catalog, source fact, rule, term link, and embedding tables.
 - Added `image_embeddings.updated_at` and changed production pgvector refresh to a server-side `INSERT ... SELECT ... ON CONFLICT`, so embedding deltas include refreshed vectors without streaming all vectors through Python.
+- Optimized the directory PLP default risk sort to score a bounded candidate window instead of issuing a production-wide product/ingredient/risk-rule aggregate before pagination.
 - Widened ingredient display, normalized, INCI, raw product-ingredient, ingredient source external ID, and canonical term slug/label columns to `TEXT` so production PostgreSQL can accept long source-derived catalog text during local-to-prod sync without truncation.
 - Changed `source_record_facts` record/field/value lookup from unique to non-unique so multiple product/ingredient-context facts from the same source record are preserved during production sync.
 - Added production deployment implementation: API Docker image now installs only serving ML extras, local scraper/indexer pipeline images are split out, and production Compose runs FastAPI, pgvector Postgres, and Caddy on one VM.

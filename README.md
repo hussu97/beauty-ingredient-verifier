@@ -120,6 +120,8 @@ Set `BPV_SYNC_LOCAL_DATABASE_URL`, `BPV_SYNC_PROD_DATABASE_URL`, `BPV_SYNC_TABLE
 When syncing from a laptop to the single-VM Docker deployment, use a private SSH tunnel or another reachable PostgreSQL URL because the production `BPV_DATABASE_URL` host `postgres` is Docker-internal.
 `source_record_facts` sync by stable `fact_code`; repeated record/field/value facts are preserved when they carry distinct product, ingredient, or source URL context.
 
+The directory PLP API keeps the default risk sort bounded: it computes profile-aware risk on a candidate window and then paginates, avoiding a full catalog product/ingredient/risk-rule aggregate at request time.
+
 ## API Surface
 
 - `GET /api/v1/health`
@@ -168,3 +170,5 @@ cd frontend && npm test -- --run && npm run build
 ## Deployment
 
 Production v1 uses Vercel for `frontend/` and one GCP Compute Engine VM for the API, Postgres, pgvector, and Caddy TLS. The backend deploy workflow builds the lightweight API image with serving ML dependencies only; scraper/indexer dependencies stay in local pipeline images. See `PRODUCTION.md` for VM sizing, GitHub Secrets, Vercel setup, sync, and backup/restore runbooks.
+
+Production frontend and backend builds initialize Sentry for the `melting-moments` org when their environment is `production`. Local runs keep Sentry disabled unless production env labels are explicitly set.

@@ -19,10 +19,11 @@ Create the Vercel project `beauty-ingredient-verifier` from `frontend/`.
 - Output directory: `dist`
 - Framework: Vite
 - Env: `VITE_API_BASE_URL=https://<api-domain>/api/v1`
+- Sentry: production builds initialize the frontend Sentry project for org `melting-moments` (`4511214385364992`) with `VITE_SENTRY_DSN`; the checked-in production fallback DSN is `https://4321d8269749044df11524e167d5f267@o4511214385364992.ingest.us.sentry.io/4511591614644224`.
 
 `frontend/vercel.json` rewrites SPA routes to `index.html`. Keep frontend secrets in Vercel only; do not copy backend database or deploy secrets into Vercel. The frontend includes `frontend/src/data/profile-options.json`, a vendored copy of `shared/profile-options.json`, because Vercel builds are rooted at `frontend/`.
 
-The production `/directory` page uses `POST /api/v1/products/directory/products` as the single PLP listing endpoint for search, brand/category filters, sort, pagination, and facet counts. No additional frontend or backend environment variables are required beyond `VITE_API_BASE_URL` and the existing API/database settings below.
+The production `/directory` page uses `POST /api/v1/products/directory/products` as the single PLP listing endpoint for search, brand/category filters, sort, pagination, and facet counts.
 
 ## GCP VM Bootstrap
 
@@ -54,7 +55,12 @@ BPV_AUTO_CREATE_TABLES=false
 BPV_BOOTSTRAP_DEMO_DATA=false
 BPV_ENABLE_OPTIONAL_ML=true
 BPV_ENABLE_SQLITE_VEC=false
+BPV_SENTRY_DSN=https://7affebd49896c5543ade3ac956d3720a@o4511214385364992.ingest.us.sentry.io/4511591611695104
+BPV_SENTRY_TRACES_SAMPLE_RATE=0.1
+BPV_SENTRY_PROFILES_SAMPLE_RATE=0
 ```
+
+Backend Sentry errors and traces go to the Sentry org `melting-moments` (`4511214385364992`). The SDK only initializes when `BPV_ENV=production`, and it sends no default PII.
 
 ## GitHub Actions Deploy
 
@@ -76,6 +82,7 @@ Required GitHub Secrets:
 | `BPV_CORS_ORIGINS` | Comma-separated Vercel origins. |
 | `BPV_OPEN_BEAUTY_FACTS_USER_AGENT` | Polite Open Beauty Facts contact UA. |
 | `BPV_EWG_USER_AGENT` | Polite EWG/archive import contact UA. |
+| `BPV_SENTRY_DSN` | Optional override for the backend Sentry DSN; deploy writes the production DSN by default. |
 | `API_DOMAIN` | Backend API domain for Caddy. |
 | `ACME_EMAIL` | TLS certificate contact email. |
 
@@ -157,6 +164,10 @@ sync-local-to-prod \
 
 If validation reports row-count mismatches, inspect whether production has stale catalog rows. The v1 sync performs upserts; it does not delete rows missing from local.
 
+## API Latency Notes
+
+The directory PLP endpoint (`POST /api/v1/products/directory/products`) should stay responsive on the full catalog. Its default `risk_desc` sort evaluates profile-aware risk over a bounded candidate window instead of running a production-wide product/ingredient/risk-rule group-by before pagination.
+
 ## Backup And Restore
 
 Back up the production database before large syncs:
@@ -201,6 +212,10 @@ cat bpv-prod.sql | docker compose --env-file /opt/bpv/.env -f /opt/bpv/docker-co
 | `BPV_SYNC_TRUST_TARGET_WATERMARK` | Jobs | No | `false` | Use prod table max timestamps as first delta watermark when no `sync_runs` history exists; enable only for validated existing bootstraps. |
 | `BPV_EWG_ATTRIBUTION_TEXT` | Backend/frontend | No | `Contains information from EWG Skin Deep.` | Attribution text wherever EWG data is surfaced. |
 | `BPV_EWG_USER_AGENT` | Jobs | Yes for EWG import | `BeautyProductVerifier/0.1 (local-dev@example.com)` | Polite EWG/archive import UA. |
+| `BPV_SENTRY_DSN` | Backend | No | production Sentry DSN when `BPV_ENV=production` | Backend Sentry ingest DSN for org `melting-moments`; SDK is disabled outside production. |
+| `BPV_SENTRY_TRACES_SAMPLE_RATE` | Backend | No | `0.1` | Backend trace sample rate from `0` to `1`. |
+| `BPV_SENTRY_PROFILES_SAMPLE_RATE` | Backend | No | `0` | Backend profiling sample rate from `0` to `1`; keep `0` unless profiling is deliberately enabled. |
+| `BPV_SENTRY_RELEASE` | Backend | No | none | Release label shown in Sentry, e.g. `api@<git-sha>`. |
 | `BPV_API_IMAGE` | Compose | Yes in prod | none | GHCR image tag deployed by Actions. |
 | `BPV_POSTGRES_DB` | Compose | Yes in prod | `beauty_product_verifier` | Postgres database name. |
 | `BPV_POSTGRES_USER` | Compose | Yes in prod | `bpv` | Postgres user. |
@@ -209,6 +224,11 @@ cat bpv-prod.sql | docker compose --env-file /opt/bpv/.env -f /opt/bpv/docker-co
 | `API_DOMAIN` | Caddy | Yes in prod | none | Public API domain. |
 | `ACME_EMAIL` | Caddy | Yes in prod | none | ACME/TLS contact email. |
 | `VITE_API_BASE_URL` | Frontend | Yes | `http://127.0.0.1:8000/api/v1` | Backend API base URL. |
+| `VITE_APP_ENV` | Frontend | No | Vite mode | Frontend runtime environment label. Production builds also use `import.meta.env.MODE=production`. |
+| `VITE_SENTRY_DSN` | Frontend | No | production Sentry DSN when environment is `production` | Frontend Sentry ingest DSN for org `melting-moments`. |
+| `VITE_SENTRY_ENVIRONMENT` | Frontend | No | `VITE_APP_ENV` or Vite mode | Environment label sent to Sentry. |
+| `VITE_SENTRY_RELEASE` | Frontend | No | none | Release label shown in Sentry, e.g. `frontend@<git-sha>`. |
+| `VITE_SENTRY_TRACES_SAMPLE_RATE` | Frontend | No | `0.1` | Frontend trace sample rate from `0` to `1`. |
 
 ## Verification
 

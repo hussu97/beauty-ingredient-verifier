@@ -1,7 +1,7 @@
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Select, and_, case, desc, func, or_, select
+from sqlalchemy import Select, case, desc, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import (
@@ -30,6 +30,9 @@ from app.services.risk import SEVERITY_LABELS, _rule_applies
 from app.services.source_fusion import normalized_product_attributes, product_source_conflicts
 
 router = APIRouter(prefix="/products", tags=["catalog"])
+RISK_SORT_CANDIDATE_FLOOR = 500
+RISK_SORT_CANDIDATE_MULTIPLIER = 8
+RISK_SORT_CANDIDATE_CEILING = 2500
 
 
 def _product_options() -> tuple:
@@ -302,6 +305,61 @@ def _category_facets(db: Session, payload: DirectoryProductsIn) -> list[Director
     ]
 
 
+def _risk_sort_candidate_limit(payload: DirectoryProductsIn, total: int) -> int:
+    requested_window = payload.offset + (payload.limit * RISK_SORT_CANDIDATE_MULTIPLIER)
+    bounded_window = min(max(requested_window, RISK_SORT_CANDIDATE_FLOOR), RISK_SORT_CANDIDATE_CEILING)
+    return min(total, bounded_window)
+
+
+def _risk_sorted_product_codes(
+    db: Session,
+    payload: DirectoryProductsIn,
+    *,
+    filters: list,
+    total: int,
+) -> list[str]:
+    candidate_limit = _risk_sort_candidate_limit(payload, total)
+    if candidate_limit <= 0:
+        return []
+
+    candidate_codes = db.scalars(
+        select(Product.product_code)
+        .outerjoin(Brand, Product.brand_code == Brand.brand_code)
+        .where(*filters)
+        .order_by(desc(Product.confidence_score), Product.normalized_name, Product.product_code)
+        .limit(candidate_limit)
+    ).all()
+    if not candidate_codes:
+        return []
+
+    candidates = (
+        db.scalars(
+            select(Product)
+            .where(Product.product_code.in_(candidate_codes))
+            .options(*_directory_product_options())
+        )
+        .unique()
+        .all()
+    )
+    products_by_code = {product.product_code: product for product in candidates}
+    ordered_candidates = [
+        products_by_code[code] for code in candidate_codes if code in products_by_code
+    ]
+    risk_by_code = _risk_summaries(db, ordered_candidates, payload.profile.model_dump())
+    ordered_candidates.sort(
+        key=lambda product: (
+            -risk_by_code[product.product_code]["score"],
+            -risk_by_code[product.product_code]["matched_ingredient_count"],
+            product.normalized_name,
+            product.product_code,
+        )
+    )
+    return [
+        product.product_code
+        for product in ordered_candidates[payload.offset : payload.offset + payload.limit]
+    ]
+
+
 @router.get("", response_model=list[ProductListOut])
 def list_products(
     q: str | None = Query(default=None),
@@ -404,36 +462,23 @@ def list_directory_products(payload: DirectoryProductsIn, db: Session = Depends(
     payload = _coerce_directory_payload(payload)
     filters = _directory_filters(payload)
     total = db.scalar(select(func.count()).select_from(Product).where(*filters)) or 0
-    coarse_score = func.coalesce(func.max(RiskRule.severity_score), 0).label("coarse_score")
-    matched_rule_count = func.count(func.distinct(RiskRule.risk_rule_code)).label("matched_rule_count")
-    ranking_stmt = (
-        select(Product.product_code, coarse_score, matched_rule_count)
-        .outerjoin(Brand, Product.brand_code == Brand.brand_code)
-        .outerjoin(ProductIngredient, ProductIngredient.product_code == Product.product_code)
-        .outerjoin(
-            RiskRule,
-            and_(
-                RiskRule.ingredient_code == ProductIngredient.ingredient_code,
-                RiskRule.active.is_(True),
-            ),
-        )
-        .where(*filters)
-        .group_by(Product.product_code, Product.normalized_name, Product.confidence_score, Brand.name)
-    )
-    sort_orders = {
-        "risk_desc": (coarse_score.desc(), matched_rule_count.desc(), Product.normalized_name),
-        "name_asc": (Product.normalized_name, Product.product_code),
-        "name_desc": (desc(Product.normalized_name), Product.product_code),
-        "brand_asc": (Brand.name, Product.normalized_name, Product.product_code),
-        "confidence_desc": (desc(Product.confidence_score), Product.normalized_name, Product.product_code),
-    }
-    rank_rows = db.execute(
-        ranking_stmt
-        .order_by(*sort_orders.get(payload.sort, sort_orders["risk_desc"]))
-        .offset(payload.offset)
-        .limit(payload.limit)
-    ).all()
-    product_codes = [row[0] for row in rank_rows]
+    if payload.sort == "risk_desc":
+        product_codes = _risk_sorted_product_codes(db, payload, filters=filters, total=total)
+    else:
+        sort_orders = {
+            "name_asc": (Product.normalized_name, Product.product_code),
+            "name_desc": (desc(Product.normalized_name), Product.product_code),
+            "brand_asc": (Brand.name, Product.normalized_name, Product.product_code),
+            "confidence_desc": (desc(Product.confidence_score), Product.normalized_name, Product.product_code),
+        }
+        product_codes = db.scalars(
+            select(Product.product_code)
+            .outerjoin(Brand, Product.brand_code == Brand.brand_code)
+            .where(*filters)
+            .order_by(*sort_orders.get(payload.sort, sort_orders["name_asc"]))
+            .offset(payload.offset)
+            .limit(payload.limit)
+        ).all()
     products_by_code = {}
     if product_codes:
         products_by_code = {
