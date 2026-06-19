@@ -187,6 +187,55 @@ def test_sync_local_to_prod_auto_strategy_uses_delta_after_successful_run(tmp_pa
     engine.dispose()
 
 
+def test_sync_local_to_prod_auto_strategy_uses_target_watermark_without_history(tmp_path) -> None:
+    source_path = tmp_path / "source.sqlite3"
+    target_path = tmp_path / "target.sqlite3"
+    _create_sqlite_db(source_path)
+    _create_sqlite_db(target_path)
+    _seed_catalog(source_path, product_name="Fresh Product")
+    _seed_catalog(target_path, product_name="Stale Product")
+
+    base_time = datetime.now().astimezone() - timedelta(days=1)
+    engine = create_engine(_sqlite_url(target_path), future=True)
+    with Session(engine) as db:
+        product = db.get(Product, "prd_test")
+        assert product is not None
+        product.updated_at = base_time
+        db.commit()
+    engine.dispose()
+
+    engine = create_engine(_sqlite_url(source_path), future=True)
+    with Session(engine) as db:
+        product = db.get(Product, "prd_test")
+        assert product is not None
+        product.name = "Fresh Product Updated"
+        product.normalized_name = "fresh product updated"
+        product.updated_at = base_time + timedelta(seconds=1)
+        db.commit()
+    engine.dispose()
+
+    result = sync_local_to_prod(
+        local_db_url=_sqlite_url(source_path),
+        prod_db_url=_sqlite_url(target_path),
+        tables="products",
+        mode="apply",
+        batch_size=2,
+        strategy="auto",
+        trust_target_watermark=True,
+    )
+
+    assert result.status == "succeeded"
+    assert result.row_counts["products"]["strategy"] == "delta"
+    assert result.row_counts["products"]["selected_source_rows"] == 1
+
+    engine = create_engine(_sqlite_url(target_path), future=True)
+    with Session(engine) as db:
+        product = db.get(Product, "prd_test")
+        assert product is not None
+        assert product.name == "Fresh Product Updated"
+    engine.dispose()
+
+
 def test_sync_local_to_prod_dry_run_does_not_write(tmp_path) -> None:
     source_path = tmp_path / "source.sqlite3"
     target_path = tmp_path / "target.sqlite3"

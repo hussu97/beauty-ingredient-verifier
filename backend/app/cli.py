@@ -331,6 +331,14 @@ def sync_local_to_prod_command(
         "--strategy",
         help="Sync row selection strategy: auto, full, or delta. Defaults to BPV_SYNC_STRATEGY.",
     ),
+    trust_target_watermark: bool | None = typer.Option(
+        None,
+        "--trust-target-watermark/--no-trust-target-watermark",
+        help=(
+            "When no sync_runs history exists, use the target table's max timestamp as "
+            "a delta watermark. Only use after verifying production was already bootstrapped."
+        ),
+    ),
     batch_size: int | None = typer.Option(None, "--batch-size", min=1),
     skip_migrations: bool = typer.Option(
         False,
@@ -348,6 +356,11 @@ def sync_local_to_prod_command(
     resolved_tables = tables or settings.sync_tables
     resolved_strategy = strategy or settings.sync_strategy
     resolved_batch_size = batch_size or settings.sync_batch_size
+    resolved_trust_target_watermark = (
+        settings.sync_trust_target_watermark
+        if trust_target_watermark is None
+        else trust_target_watermark
+    )
 
     if not resolved_prod_db:
         raise typer.BadParameter("Provide --prod-db or set BPV_SYNC_PROD_DATABASE_URL in .env.")
@@ -365,6 +378,7 @@ def sync_local_to_prod_command(
         mode=mode,
         strategy=resolved_strategy,
         batch_size=resolved_batch_size,
+        trust_target_watermark=resolved_trust_target_watermark,
     )
     console.print_json(data=result.as_dict())
 

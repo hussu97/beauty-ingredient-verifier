@@ -237,6 +237,20 @@ def _latest_successful_sync_watermark(
     return None
 
 
+def _target_table_watermark(
+    connection: Connection,
+    table: Table,
+    watermark_column: sa.Column[Any] | None,
+) -> datetime | None:
+    if watermark_column is None:
+        return None
+    try:
+        value = connection.scalar(select(func.max(watermark_column)).select_from(table))
+    except sa.exc.DBAPIError:
+        return None
+    return value if isinstance(value, datetime) else None
+
+
 def _insert_for_target(connection: Connection, table: Table):
     if connection.dialect.name == "postgresql":
         return postgres_insert(table)
@@ -532,6 +546,7 @@ def sync_local_to_prod(
     strategy: SyncStrategy = "auto",
     batch_size: int = 500,
     record_run: bool = True,
+    trust_target_watermark: bool = False,
 ) -> CatalogSyncResult:
     if mode not in {"dry-run", "apply", "validate-only"}:
         raise ValueError(f"Unknown sync mode: {mode}")
@@ -592,6 +607,17 @@ def sync_local_to_prod(
                 watermark_value = None
                 full_bootstrap = False
                 if strategy in {"auto", "delta"} and watermark_column is not None:
+                    if (
+                        previous_watermark is None
+                        and target_rows_before > 0
+                        and trust_target_watermark
+                    ):
+                        with target_engine.connect() as target_connection:
+                            previous_watermark = _target_table_watermark(
+                                target_connection,
+                                table,
+                                watermark_column,
+                            )
                     if previous_watermark is not None and target_rows_before > 0:
                         selected_strategy = "delta"
                         watermark_value = previous_watermark

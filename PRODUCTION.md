@@ -115,6 +115,7 @@ BPV_SYNC_PROD_DATABASE_URL=postgresql+psycopg://bpv:...@127.0.0.1:5432/beauty_pr
 BPV_SYNC_TABLES=all
 BPV_SYNC_BATCH_SIZE=500
 BPV_SYNC_STRATEGY=auto
+BPV_SYNC_TRUST_TARGET_WATERMARK=false
 ```
 
 Run Alembic first, then sync idempotent table upserts. CLI flags override `.env` values:
@@ -126,7 +127,7 @@ sync-local-to-prod --dry-run
 sync-local-to-prod --apply
 ```
 
-The sync writes `sync_runs` rows in production for applied runs and refreshes the Postgres `image_embedding_vectors` pgvector index after `image_embeddings` are synced. The default `auto` strategy performs a full bootstrap when no prior successful run exists for a table, then selects deltas from `updated_at`, `created_at`, `fetched_at`, or `source_updated_at` where present. Tables without a timestamp continue to full-upsert. PostgreSQL targets use per-batch temporary tables with COPY when the driver supports it.
+The sync writes `sync_runs` rows in production for applied runs and refreshes the Postgres `image_embedding_vectors` pgvector index after `image_embeddings` are synced. The default `auto` strategy performs a full bootstrap when no prior successful run exists, then selects deltas from `updated_at`, `created_at`, `fetched_at`, or `source_updated_at` where present. For already-bootstrapped production databases that predate `sync_runs`, pass `--trust-target-watermark` or set `BPV_SYNC_TRUST_TARGET_WATERMARK=true` only after validating prod counts; this uses the target table's max timestamp as the first delta watermark. Tables without a timestamp continue to full-upsert. PostgreSQL targets use per-batch temporary tables with COPY when the driver supports it.
 For laptop-driven syncs into the single-VM Docker stack, connect through a private SSH tunnel or another reachable PostgreSQL URL; the VM `.env` `BPV_DATABASE_URL` uses the Docker-internal `postgres` hostname.
 Do not deduplicate `source_record_facts` by record/field/value before sync; repeated facts can carry distinct product, ingredient, or source URL context and are keyed by `fact_code`.
 
@@ -197,6 +198,7 @@ cat bpv-prod.sql | docker compose --env-file /opt/bpv/.env -f /opt/bpv/docker-co
 | `BPV_SYNC_TABLES` | Jobs | No | `all` | Comma-separated sync tables or `all`; runtime tables remain blocked. |
 | `BPV_SYNC_BATCH_SIZE` | Jobs | No | `500` | Batch size for local-to-prod upserts. |
 | `BPV_SYNC_STRATEGY` | Jobs | No | `auto` | One of `auto`, `full`, or `delta`; `auto` full-bootstraps then uses timestamp deltas. |
+| `BPV_SYNC_TRUST_TARGET_WATERMARK` | Jobs | No | `false` | Use prod table max timestamps as first delta watermark when no `sync_runs` history exists; enable only for validated existing bootstraps. |
 | `BPV_EWG_ATTRIBUTION_TEXT` | Backend/frontend | No | `Contains information from EWG Skin Deep.` | Attribution text wherever EWG data is surfaced. |
 | `BPV_EWG_USER_AGENT` | Jobs | Yes for EWG import | `BeautyProductVerifier/0.1 (local-dev@example.com)` | Polite EWG/archive import UA. |
 | `BPV_API_IMAGE` | Compose | Yes in prod | none | GHCR image tag deployed by Actions. |

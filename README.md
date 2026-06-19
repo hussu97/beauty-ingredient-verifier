@@ -116,7 +116,7 @@ sync-local-to-prod --dry-run
 sync-local-to-prod --apply
 ```
 
-Set `BPV_SYNC_LOCAL_DATABASE_URL`, `BPV_SYNC_PROD_DATABASE_URL`, `BPV_SYNC_TABLES`, `BPV_SYNC_BATCH_SIZE`, and `BPV_SYNC_STRATEGY` in `backend/.env`, or pass the equivalent CLI flags. Applied syncs are recorded in production `sync_runs`; the default `auto` strategy full-bootstraps a table first, then syncs timestamp deltas where available. Runtime/user tables (`scan_jobs`, `scan_candidates`, `risk_evaluations`) are intentionally excluded.
+Set `BPV_SYNC_LOCAL_DATABASE_URL`, `BPV_SYNC_PROD_DATABASE_URL`, `BPV_SYNC_TABLES`, `BPV_SYNC_BATCH_SIZE`, and `BPV_SYNC_STRATEGY` in `backend/.env`, or pass the equivalent CLI flags. Applied syncs are recorded in production `sync_runs`; the default `auto` strategy full-bootstraps a table first, then syncs timestamp deltas where available. For already-bootstrapped prod databases without run history, use `--trust-target-watermark` only after validating prod counts. Runtime/user tables (`scan_jobs`, `scan_candidates`, `risk_evaluations`) are intentionally excluded.
 When syncing from a laptop to the single-VM Docker deployment, use a private SSH tunnel or another reachable PostgreSQL URL because the production `BPV_DATABASE_URL` host `postgres` is Docker-internal.
 `source_record_facts` sync by stable `fact_code`; repeated record/field/value facts are preserved when they carry distinct product, ingredient, or source URL context.
 

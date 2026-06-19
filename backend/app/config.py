@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     sync_tables: str = "all"
     sync_batch_size: int = Field(default=500, ge=1)
     sync_strategy: str = "auto"
+    sync_trust_target_watermark: bool = False
     max_scan_upload_mb: int = Field(default=12, ge=1, le=100)
     ewg_attribution_text: str = "Contains information from EWG Skin Deep."
     ewg_user_agent: str = "BeautyProductVerifier/0.1 (local-dev@example.com)"
