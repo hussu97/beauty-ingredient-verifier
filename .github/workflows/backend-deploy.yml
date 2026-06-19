@@ -93,6 +93,10 @@ jobs:
           BPV_IMAGE_DOWNLOAD_TIMEOUT_SECONDS=20
           BPV_EWG_ATTRIBUTION_TEXT=Contains information from EWG Skin Deep.
           BPV_EWG_USER_AGENT=${{ secrets.BPV_EWG_USER_AGENT }}
+          BPV_SENTRY_DSN=https://7affebd49896c5543ade3ac956d3720a@o4511214385364992.ingest.us.sentry.io/4511591611695104
+          BPV_SENTRY_TRACES_SAMPLE_RATE=0.1
+          BPV_SENTRY_PROFILES_SAMPLE_RATE=0
+          BPV_SENTRY_RELEASE=api@${{ github.sha }}
           API_DOMAIN=${{ secrets.API_DOMAIN }}
           ACME_EMAIL=${{ secrets.ACME_EMAIL }}
           EOF

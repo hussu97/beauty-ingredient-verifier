@@ -17,6 +17,7 @@ dependencies = [
   "python-multipart>=0.0.9",
   "rapidfuzz>=3.9",
   "rich>=13.7",
+  "sentry-sdk[fastapi]>=2.0",
   "sqlalchemy>=2.0",
   "typer>=0.12",
   "uvicorn[standard]>=0.30"
