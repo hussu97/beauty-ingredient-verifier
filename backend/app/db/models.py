@@ -144,7 +144,7 @@ class IngredientSourceLink(Base):
     ingredient_code: Mapped[str] = mapped_column(ForeignKey("ingredients.ingredient_code"), index=True)
     source_record_code: Mapped[str] = mapped_column(ForeignKey("source_records.source_record_code"), index=True)
     source_code: Mapped[str] = mapped_column(ForeignKey("sources.source_code"), index=True)
-    external_id: Mapped[str] = mapped_column(String(300))
+    external_id: Mapped[str] = mapped_column(Text)
     source_url: Mapped[str | None] = mapped_column(String(800))
     match_method: Mapped[str] = mapped_column(String(80))
     match_confidence: Mapped[float] = mapped_column(Float, default=1.0)
@@ -165,8 +165,8 @@ class CanonicalTerm(Base, TimestampMixin):
 
     term_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     term_type: Mapped[str] = mapped_column(String(80), index=True)
-    slug: Mapped[str] = mapped_column(String(220), index=True)
-    label: Mapped[str] = mapped_column(String(240))
+    slug: Mapped[str] = mapped_column(Text, index=True)
+    label: Mapped[str] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
 
     aliases: Mapped[list[TermAlias]] = relationship(back_populates="term", cascade="all, delete-orphan")
@@ -316,9 +316,9 @@ class Ingredient(Base, TimestampMixin):
     __tablename__ = "ingredients"
 
     ingredient_code: Mapped[str] = mapped_column(String(32), primary_key=True)
-    canonical_name: Mapped[str] = mapped_column(String(260))
-    normalized_name: Mapped[str] = mapped_column(String(280), unique=True, index=True)
-    inci_name: Mapped[str | None] = mapped_column(String(260))
+    canonical_name: Mapped[str] = mapped_column(Text)
+    normalized_name: Mapped[str] = mapped_column(Text, unique=True, index=True)
+    inci_name: Mapped[str | None] = mapped_column(Text)
     cas_number: Mapped[str | None] = mapped_column(String(80))
     ec_number: Mapped[str | None] = mapped_column(String(80))
     pubchem_cid: Mapped[str | None] = mapped_column(String(80))
@@ -354,7 +354,7 @@ class ProductIngredient(Base):
     product_ingredient_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     product_code: Mapped[str] = mapped_column(ForeignKey("products.product_code"), index=True)
     ingredient_code: Mapped[str] = mapped_column(ForeignKey("ingredients.ingredient_code"), index=True)
-    raw_name: Mapped[str] = mapped_column(String(260))
+    raw_name: Mapped[str] = mapped_column(Text)
     rank: Mapped[int | None] = mapped_column(Integer)
     percent_min: Mapped[float | None] = mapped_column(Float)
     percent_max: Mapped[float | None] = mapped_column(Float)

@@ -116,6 +116,7 @@ sync-local-to-prod --local-db sqlite:///./storage/beauty_product_verifier.sqlite
 ```
 
 Applied syncs are recorded in production `sync_runs`. Runtime/user tables (`scan_jobs`, `scan_candidates`, `risk_evaluations`) are intentionally excluded.
+When syncing from a laptop to the single-VM Docker deployment, use a private SSH tunnel or another reachable PostgreSQL URL because the production `BPV_DATABASE_URL` host `postgres` is Docker-internal.
 
 ## API Surface
 

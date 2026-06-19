@@ -3,6 +3,7 @@
 ## 2026-06-18
 
 ### Backend
+- Widened ingredient display, normalized, INCI, raw product-ingredient, ingredient source external ID, and canonical term slug/label columns to `TEXT` so production PostgreSQL can accept long source-derived catalog text during local-to-prod sync without truncation.
 - Added production deployment implementation: API Docker image now installs only serving ML extras, local scraper/indexer pipeline images are split out, and production Compose runs FastAPI, pgvector Postgres, and Caddy on one VM.
 - Changed the production API Docker build to preinstall CPU-only Torch and use GitHub Actions Docker cache, avoiding CUDA/NVIDIA image bloat on the single-VM boot disk.
 - Fixed the backend deploy workflow to initialize Docker Buildx before using the GitHub Actions cache backend.

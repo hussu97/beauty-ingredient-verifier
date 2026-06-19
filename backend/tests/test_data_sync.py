@@ -3,8 +3,9 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.sqltypes import Text
 
-from app.db.models import Base, Brand, Product, Source, SourceRecord, SyncRun
+from app.db.models import Base, Brand, Ingredient, Product, Source, SourceRecord, SyncRun
 from app.db.session import apply_sqlite_pragmas
 from app.services.data_sync import (
     RUNTIME_TABLE_NAMES,
@@ -78,6 +79,21 @@ def test_sync_table_selection_blocks_runtime_tables() -> None:
     assert parse_sync_tables("products,sources") == ["sources", "products"]
 
 
+def test_source_derived_catalog_text_columns_are_unbounded() -> None:
+    text_columns = [
+        ("ingredients", "canonical_name"),
+        ("ingredients", "normalized_name"),
+        ("ingredients", "inci_name"),
+        ("product_ingredients", "raw_name"),
+        ("ingredient_source_links", "external_id"),
+        ("canonical_terms", "slug"),
+        ("canonical_terms", "label"),
+    ]
+
+    for table_name, column_name in text_columns:
+        assert isinstance(Base.metadata.tables[table_name].c[column_name].type, Text)
+
+
 def test_sync_local_to_prod_upserts_and_records_run(tmp_path) -> None:
     source_path = tmp_path / "source.sqlite3"
     target_path = tmp_path / "target.sqlite3"
@@ -131,4 +147,47 @@ def test_sync_local_to_prod_dry_run_does_not_write(tmp_path) -> None:
     with Session(engine) as db:
         assert db.get(Source, "src_test") is None
         assert db.scalars(select(SyncRun)).all() == []
+    engine.dispose()
+
+
+def test_sync_local_to_prod_preserves_long_ingredient_names(tmp_path) -> None:
+    source_path = tmp_path / "source.sqlite3"
+    target_path = tmp_path / "target.sqlite3"
+    _create_sqlite_db(source_path)
+    _create_sqlite_db(target_path)
+    _seed_catalog(source_path, product_name="Fresh Product")
+
+    long_name = " ".join(["HYDROGENATED JOJOBA OIL"] * 20)
+    engine = create_engine(_sqlite_url(source_path), future=True)
+    with Session(engine) as db:
+        db.add(
+            Ingredient(
+                ingredient_code="ing_long",
+                canonical_name=long_name,
+                normalized_name=long_name.lower(),
+                inci_name=long_name.upper(),
+                functions=[],
+                regulatory_status="unknown",
+                source_record_code="sr_test_product",
+            )
+        )
+        db.commit()
+    engine.dispose()
+
+    result = sync_local_to_prod(
+        local_db_url=_sqlite_url(source_path),
+        prod_db_url=_sqlite_url(target_path),
+        tables="sources,source_records,ingredients",
+        mode="apply",
+        batch_size=2,
+    )
+
+    assert result.status == "succeeded"
+
+    engine = create_engine(_sqlite_url(target_path), future=True)
+    with Session(engine) as db:
+        ingredient = db.get(Ingredient, "ing_long")
+        assert ingredient is not None
+        assert ingredient.canonical_name == long_name
+        assert ingredient.inci_name == long_name.upper()
     engine.dispose()
