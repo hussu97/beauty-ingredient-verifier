@@ -90,6 +90,8 @@ def iter_cdx_originals(
     id_regex: re.Pattern[str],
     from_date: str | None = None,
     page_size: int = 20000,
+    cdx_timeout: float = 180.0,
+    cdx_max_failures: int = 5,
 ) -> Iterator[tuple[str, str]]:
     """Yield distinct archived EWG page URLs and exact capture timestamps.
 
@@ -116,7 +118,7 @@ def iter_cdx_originals(
         if resume_key:
             params["resumeKey"] = resume_key
         try:
-            response = client.get(CDX_API, params=params, timeout=180.0)
+            response = client.get(CDX_API, params=params, timeout=cdx_timeout)
             if response.status_code in TRANSIENT_STATUS_CODES:
                 raise httpx.HTTPStatusError(
                     f"Transient CDX status {response.status_code}",
@@ -127,6 +129,11 @@ def iter_cdx_originals(
             transient_failures = 0
         except httpx.HTTPError:
             transient_failures += 1
+            if transient_failures >= cdx_max_failures:
+                raise RuntimeError(
+                    f"Wayback CDX failed {transient_failures} consecutive time(s) "
+                    f"for {url_pattern}; rerun the importer to resume."
+                )
             time.sleep(min(60.0, 2.0 * transient_failures))
             continue
         rows = response.json() or []
@@ -297,6 +304,8 @@ def import_ewg_from_wayback(
     skip_existing: bool = True,
     commit_every: int = 50,
     fetch_workers: int = 1,
+    cdx_timeout: float = 180.0,
+    cdx_max_failures: int = 5,
     progress: Callable[[dict[str, int]], None] | None = None,
 ) -> dict[str, int]:
     """Discover and import EWG Skin Deep pages from the Wayback Machine.
@@ -311,6 +320,8 @@ def import_ewg_from_wayback(
             concurrently; DB imports stay serial (SQLite is single-writer).
         from_date: optional CDX ``from`` filter (e.g. "2023"); latest capture is
             always fetched regardless.
+        cdx_timeout: timeout in seconds for each CDX page request.
+        cdx_max_failures: consecutive CDX failures before aborting the resumable run.
     """
     ensure_ewg_source(db)
     if not dry_run:
@@ -384,7 +395,12 @@ def import_ewg_from_wayback(
 
             def _candidates() -> Iterator[tuple[str, str]]:
                 for original in iter_cdx_originals(
-                    client, url_pattern=url_pattern, id_regex=id_regex, from_date=from_date
+                    client,
+                    url_pattern=url_pattern,
+                    id_regex=id_regex,
+                    from_date=from_date,
+                    cdx_timeout=cdx_timeout,
+                    cdx_max_failures=cdx_max_failures,
                 ):
                     original_url, timestamp = original
                     if skip_existing and _external_id_from_url(original_url) in existing:

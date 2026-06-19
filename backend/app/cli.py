@@ -88,6 +88,18 @@ def import_ewg_wayback_command(
         help="Parallel archive.org fetch threads. Fetch+parse run concurrently; "
         "DB imports stay serial. Try 8. Lower it if fetch_failures spike (429s).",
     ),
+    cdx_timeout: float = typer.Option(
+        180.0,
+        "--cdx-timeout",
+        min=1.0,
+        help="Timeout in seconds for each Wayback CDX discovery page request.",
+    ),
+    cdx_max_failures: int = typer.Option(
+        5,
+        "--cdx-max-failures",
+        min=1,
+        help="Consecutive CDX discovery failures before aborting the resumable run.",
+    ),
     review_threshold: float = typer.Option(0.82, "--review-threshold", min=0.0, max=1.0),
     output_path: Path | None = typer.Option(
         None,
@@ -142,6 +154,8 @@ def import_ewg_wayback_command(
             request_delay=request_delay,
             from_date=from_date,
             fetch_workers=fetch_workers,
+            cdx_timeout=cdx_timeout,
+            cdx_max_failures=cdx_max_failures,
             progress=_progress,
         )
         if dry_run:

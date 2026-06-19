@@ -1,3 +1,7 @@
+import re
+
+import httpx
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,6 +15,26 @@ from app.services.importers.ewg_parser import (
     product_links_from_snapshot,
 )
 from app.services.importers.ewg_skin_deep import import_ewg_product_payload
+from app.services.importers.ewg_wayback import iter_cdx_originals
+
+
+def test_cdx_discovery_aborts_after_bounded_failures(monkeypatch):
+    class TimeoutClient:
+        def get(self, *args, **kwargs):
+            raise httpx.ConnectTimeout("timed out")
+
+    monkeypatch.setattr("app.services.importers.ewg_wayback.time.sleep", lambda _seconds: None)
+
+    with pytest.raises(RuntimeError, match="Wayback CDX failed 2 consecutive"):
+        list(
+            iter_cdx_originals(
+                TimeoutClient(),
+                url_pattern="ewg.org/skindeep/products/*",
+                id_regex=re.compile(r"/skindeep/products/\d+[-/]"),
+                cdx_timeout=1.0,
+                cdx_max_failures=2,
+            )
+        )
 
 
 def test_parse_product_snapshot_extracts_scores_ingredients_and_packaging():

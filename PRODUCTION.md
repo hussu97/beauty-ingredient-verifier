@@ -90,6 +90,12 @@ docker compose -f docker-compose.pipeline.yml --profile scraper run --rm scraper
   import-ewg-wayback --max-products 0 --scrape-ingredients --fetch-workers 8
 ```
 
+If archive.org CDX discovery is timing out, the importer is resumable; rerun with bounded discovery retries and try again later if it aborts:
+
+```bash
+import-ewg-wayback --max-products 0 --no-scrape-ingredients --fetch-workers 4 --request-delay 0.25 --cdx-timeout 30 --cdx-max-failures 2
+```
+
 Indexer container:
 
 ```bash

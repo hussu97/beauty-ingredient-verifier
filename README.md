@@ -95,6 +95,7 @@ EWG Skin Deep can be imported as a second catalog/enrichment source through arch
 cd backend
 beauty-product-verifier import-ewg-wayback --max-products 100 --dry-run
 beauty-product-verifier import-ewg-wayback --max-products 0 --scrape-ingredients --fetch-workers 8
+beauty-product-verifier import-ewg-wayback --max-products 0 --no-scrape-ingredients --fetch-workers 4 --request-delay 0.25 --cdx-timeout 30 --cdx-max-failures 2
 beauty-product-verifier backfill-ewg-wayback-images --fetch-workers 8
 ```
 
