@@ -260,6 +260,7 @@ def _upsert_embedding(db: Session, image: ProductImage, image_vector: ImageVecto
         embedding.model_name = image_vector.model_name
         embedding.dimensions = image_vector.dimensions
         embedding.vector = image_vector.vector
+        embedding.updated_at = datetime.now(UTC)
 
     settings = get_settings()
     if settings.enable_sqlite_vec:

@@ -42,6 +42,9 @@ class TimestampMixin:
 
 class Source(Base, TimestampMixin):
     __tablename__ = "sources"
+    __table_args__ = (
+        Index("ix_sources_updated_at", "updated_at"),
+    )
 
     source_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
@@ -59,6 +62,7 @@ class SourceRecord(Base):
     __table_args__ = (
         UniqueConstraint("source_code", "record_type", "external_id", name="uq_source_records_source_type_external"),
         Index("ix_source_records_source_external", "source_code", "external_id"),
+        Index("ix_source_records_created_at", "created_at"),
     )
 
     source_record_code: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -84,6 +88,7 @@ class SourceRecordFact(Base):
             "field_name",
             "normalized_value",
         ),
+        Index("ix_source_record_facts_updated_at", "updated_at"),
     )
 
     fact_code: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -114,6 +119,7 @@ class ProductSourceLink(Base):
     __table_args__ = (
         UniqueConstraint("product_code", "source_record_code", name="uq_product_source_links_product_record"),
         UniqueConstraint("source_code", "external_id", name="uq_product_source_links_source_external"),
+        Index("ix_product_source_links_updated_at", "updated_at"),
     )
 
     product_source_link_code: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -138,6 +144,7 @@ class IngredientSourceLink(Base):
     __tablename__ = "ingredient_source_links"
     __table_args__ = (
         UniqueConstraint("ingredient_code", "source_record_code", name="uq_ingredient_source_links_ingredient_record"),
+        Index("ix_ingredient_source_links_updated_at", "updated_at"),
     )
 
     ingredient_source_link_code: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -161,6 +168,7 @@ class CanonicalTerm(Base, TimestampMixin):
     __tablename__ = "canonical_terms"
     __table_args__ = (
         UniqueConstraint("term_type", "slug", name="uq_canonical_terms_type_slug"),
+        Index("ix_canonical_terms_updated_at", "updated_at"),
     )
 
     term_code: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -178,6 +186,7 @@ class TermAlias(Base):
     __tablename__ = "term_aliases"
     __table_args__ = (
         UniqueConstraint("term_code", "source_code", "normalized_alias", name="uq_term_aliases_term_source_alias"),
+        Index("ix_term_aliases_created_at", "created_at"),
     )
 
     alias_code: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -199,6 +208,7 @@ class ProductTermLink(Base):
             "source_record_code",
             name="uq_product_term_links_product_term_record",
         ),
+        Index("ix_product_term_links_created_at", "created_at"),
     )
 
     product_term_link_code: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -225,6 +235,7 @@ class IngredientTermLink(Base):
             "source_record_code",
             name="uq_ingredient_term_links_ingredient_term_record",
         ),
+        Index("ix_ingredient_term_links_created_at", "created_at"),
     )
 
     ingredient_term_link_code: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -244,6 +255,9 @@ class IngredientTermLink(Base):
 
 class Brand(Base, TimestampMixin):
     __tablename__ = "brands"
+    __table_args__ = (
+        Index("ix_brands_updated_at", "updated_at"),
+    )
 
     brand_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
@@ -255,6 +269,9 @@ class Brand(Base, TimestampMixin):
 
 class Category(Base, TimestampMixin):
     __tablename__ = "categories"
+    __table_args__ = (
+        Index("ix_categories_updated_at", "updated_at"),
+    )
 
     category_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
@@ -265,6 +282,9 @@ class Category(Base, TimestampMixin):
 
 class Product(Base, TimestampMixin):
     __tablename__ = "products"
+    __table_args__ = (
+        Index("ix_products_updated_at", "updated_at"),
+    )
 
     product_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     barcode: Mapped[str | None] = mapped_column(String(80), unique=True)
@@ -298,6 +318,9 @@ class ProductCategory(Base):
 
 class ProductImage(Base, TimestampMixin):
     __tablename__ = "product_images"
+    __table_args__ = (
+        Index("ix_product_images_updated_at", "updated_at"),
+    )
 
     image_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     product_code: Mapped[str] = mapped_column(ForeignKey("products.product_code"), index=True)
@@ -314,6 +337,9 @@ class ProductImage(Base, TimestampMixin):
 
 class Ingredient(Base, TimestampMixin):
     __tablename__ = "ingredients"
+    __table_args__ = (
+        Index("ix_ingredients_updated_at", "updated_at"),
+    )
 
     ingredient_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     canonical_name: Mapped[str] = mapped_column(Text)
@@ -335,6 +361,9 @@ class Ingredient(Base, TimestampMixin):
 
 class IngredientSynonym(Base):
     __tablename__ = "ingredient_synonyms"
+    __table_args__ = (
+        Index("ix_ingredient_synonyms_created_at", "created_at"),
+    )
 
     synonym_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     ingredient_code: Mapped[str] = mapped_column(ForeignKey("ingredients.ingredient_code"))
@@ -349,6 +378,7 @@ class ProductIngredient(Base):
     __tablename__ = "product_ingredients"
     __table_args__ = (
         UniqueConstraint("product_code", "ingredient_code", name="uq_product_ingredients_product_ingredient"),
+        Index("ix_product_ingredients_created_at", "created_at"),
     )
 
     product_ingredient_code: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -368,6 +398,9 @@ class ProductIngredient(Base):
 
 class RiskRule(Base, TimestampMixin):
     __tablename__ = "risk_rules"
+    __table_args__ = (
+        Index("ix_risk_rules_updated_at", "updated_at"),
+    )
 
     risk_rule_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     ingredient_code: Mapped[str] = mapped_column(ForeignKey("ingredients.ingredient_code"), index=True)
@@ -437,6 +470,9 @@ class ScanCandidate(Base):
 
 class AdverseEventSignal(Base):
     __tablename__ = "adverse_event_signals"
+    __table_args__ = (
+        Index("ix_adverse_event_signals_created_at", "created_at"),
+    )
 
     signal_code: Mapped[str] = mapped_column(String(32), primary_key=True)
     product_code: Mapped[str | None] = mapped_column(ForeignKey("products.product_code"))
@@ -455,6 +491,7 @@ class ImageEmbedding(Base):
     __table_args__ = (
         Index("ix_image_embeddings_model_dimensions", "model_name", "dimensions"),
         Index("ix_image_embeddings_product_model", "product_code", "model_name"),
+        Index("ix_image_embeddings_updated_at", "updated_at"),
     )
 
     embedding_code: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -464,6 +501,7 @@ class ImageEmbedding(Base):
     dimensions: Mapped[int] = mapped_column(Integer)
     vector: Mapped[list[float]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(UTCAwareDateTime(), default=utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(UTCAwareDateTime(), default=utcnow, onupdate=utcnow)
 
 
 class SyncRun(Base):

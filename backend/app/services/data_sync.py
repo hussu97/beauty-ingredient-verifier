@@ -454,29 +454,63 @@ def _finish_sync_run(
         )
 
 
-def _vector_literal(vector: list[float]) -> str:
-    return json.dumps([float(item) for item in vector])
-
-
-def refresh_postgres_vector_index(engine: Engine, *, batch_size: int = 500) -> int:
+def _postgres_vector_source_count(engine: Engine, *, watermark_value: datetime | None = None) -> int:
     if engine.dialect.name != "postgresql":
         return 0
 
-    image_embeddings = _table("image_embeddings")
-    total = 0
-    select_statement = (
-        select(
-            image_embeddings.c.embedding_code,
-            image_embeddings.c.image_code,
-            image_embeddings.c.product_code,
-            image_embeddings.c.model_name,
-            image_embeddings.c.dimensions,
-            image_embeddings.c.vector,
+    where_sql = "dimensions = :dimensions"
+    params: dict[str, Any] = {"dimensions": POSTGRES_VECTOR_DIMENSIONS}
+    if watermark_value is not None:
+        where_sql += " AND updated_at >= :watermark_value"
+        params["watermark_value"] = watermark_value
+
+    with engine.connect() as connection:
+        return int(
+            connection.scalar(
+                sa.text(
+                    f"""
+                    SELECT count(*)
+                    FROM image_embeddings
+                    WHERE {where_sql}
+                    """
+                ),
+                params,
+            )
+            or 0
         )
-        .where(image_embeddings.c.dimensions == POSTGRES_VECTOR_DIMENSIONS)
-        .order_by(image_embeddings.c.embedding_code)
+
+
+def _postgres_vector_index_count(engine: Engine) -> int:
+    if engine.dialect.name != "postgresql":
+        return 0
+
+    with engine.connect() as connection:
+        return int(
+            connection.scalar(sa.text("SELECT count(*) FROM image_embedding_vectors")) or 0
+        )
+
+
+def refresh_postgres_vector_index(
+    engine: Engine,
+    *,
+    batch_size: int = 500,
+    watermark_value: datetime | None = None,
+) -> int:
+    del batch_size
+    if engine.dialect.name != "postgresql":
+        return 0
+
+    where_sql = (
+        "dimensions = :dimensions "
+        "AND jsonb_typeof(vector::jsonb) = 'array' "
+        "AND jsonb_array_length(vector::jsonb) = :dimensions"
     )
-    upsert_statement = sa.text(
+    params: dict[str, Any] = {"dimensions": POSTGRES_VECTOR_DIMENSIONS}
+    if watermark_value is not None:
+        where_sql += " AND updated_at >= :watermark_value"
+        params["watermark_value"] = watermark_value
+
+    statement = sa.text(
         """
         INSERT INTO image_embedding_vectors (
             embedding_code,
@@ -487,15 +521,16 @@ def refresh_postgres_vector_index(engine: Engine, *, batch_size: int = 500) -> i
             embedding,
             updated_at
         )
-        VALUES (
-            :embedding_code,
-            :image_code,
-            :product_code,
-            :model_name,
-            :dimensions,
-            CAST(:embedding AS vector),
+        SELECT
+            embedding_code,
+            image_code,
+            product_code,
+            model_name,
+            dimensions,
+            CAST(vector::text AS vector),
             now()
-        )
+        FROM image_embeddings
+        WHERE {where_sql}
         ON CONFLICT (embedding_code) DO UPDATE SET
             image_code = EXCLUDED.image_code,
             product_code = EXCLUDED.product_code,
@@ -504,37 +539,17 @@ def refresh_postgres_vector_index(engine: Engine, *, batch_size: int = 500) -> i
             embedding = EXCLUDED.embedding,
             updated_at = now()
         """
+        .replace("{where_sql}", where_sql)
     )
 
-    with engine.connect() as source_connection:
-        result = source_connection.execution_options(stream_results=True).execute(select_statement)
-        while True:
-            rows = result.fetchmany(batch_size)
-            if not rows:
-                break
-            payload = []
-            for row in rows:
-                mapping = row._mapping
-                vector = mapping["vector"] or []
-                if len(vector) != POSTGRES_VECTOR_DIMENSIONS:
-                    continue
-                payload.append(
-                    {
-                        "embedding_code": mapping["embedding_code"],
-                        "image_code": mapping["image_code"],
-                        "product_code": mapping["product_code"],
-                        "model_name": mapping["model_name"],
-                        "dimensions": mapping["dimensions"],
-                        "embedding": _vector_literal(vector),
-                    }
-                )
-            if not payload:
-                continue
-            with engine.begin() as target_connection:
-                target_connection.execute(upsert_statement, payload)
-            total += len(payload)
+    selected_rows = _postgres_vector_source_count(engine, watermark_value=watermark_value)
+    if selected_rows == 0:
+        return 0
 
-    return total
+    with engine.begin() as connection:
+        connection.execute(statement, params)
+
+    return selected_rows
 
 
 def sync_local_to_prod(
@@ -667,13 +682,25 @@ def sync_local_to_prod(
                 )
 
         if mode == "apply" and "image_embeddings" in table_names:
-            vector_rows = refresh_postgres_vector_index(target_engine, batch_size=batch_size)
+            embedding_counts = row_counts.get("image_embeddings", {})
+            vector_watermark = None
+            if embedding_counts.get("strategy") == "delta" and embedding_counts.get("watermark_value"):
+                vector_watermark = datetime.fromisoformat(embedding_counts["watermark_value"])
+            vector_rows_before = _postgres_vector_index_count(target_engine)
+            vector_source_rows = _postgres_vector_source_count(target_engine)
+            vector_rows = refresh_postgres_vector_index(
+                target_engine,
+                batch_size=batch_size,
+                watermark_value=vector_watermark,
+            )
+            vector_rows_after = _postgres_vector_index_count(target_engine)
             row_counts["image_embedding_vectors"] = {
-                "source_rows": vector_rows,
-                "target_rows_before": 0,
-                "target_rows_after": vector_rows,
+                "source_rows": vector_source_rows,
+                "selected_source_rows": vector_rows,
+                "target_rows_before": vector_rows_before,
+                "target_rows_after": vector_rows_after,
                 "upserted_rows": vector_rows,
-                "matched": True,
+                "matched": vector_source_rows == vector_rows_after,
             }
 
         mismatched = [

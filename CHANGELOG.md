@@ -22,6 +22,8 @@
 ### Backend
 - Optimized `sync-local-to-prod` with env-backed defaults, `auto`/`full`/`delta` strategies, timestamp-watermark delta selection after safe full bootstrap, richer per-table run metadata, and PostgreSQL temp-table/COPY bulk upserts.
 - Added opt-in target-table watermark fallback for already-bootstrapped production databases that do not yet have `sync_runs` history, avoiding unnecessary full re-upserts after counts are validated.
+- Added database indexes on sync watermark timestamp columns so dry-run/apply delta selection avoids full scans on large catalog, source fact, rule, term link, and embedding tables.
+- Added `image_embeddings.updated_at` and changed production pgvector refresh to a server-side `INSERT ... SELECT ... ON CONFLICT`, so embedding deltas include refreshed vectors without streaming all vectors through Python.
 - Widened ingredient display, normalized, INCI, raw product-ingredient, ingredient source external ID, and canonical term slug/label columns to `TEXT` so production PostgreSQL can accept long source-derived catalog text during local-to-prod sync without truncation.
 - Changed `source_record_facts` record/field/value lookup from unique to non-unique so multiple product/ingredient-context facts from the same source record are preserved during production sync.
 - Added production deployment implementation: API Docker image now installs only serving ML extras, local scraper/indexer pipeline images are split out, and production Compose runs FastAPI, pgvector Postgres, and Caddy on one VM.

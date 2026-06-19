@@ -74,6 +74,7 @@ def test_index_images_uses_sentence_transformer_adapter(
     )
     assert embedding is not None
     assert embedding.vector == [1.0, 0.0, 0.0]
+    assert embedding.updated_at is not None
     assert image.embedding_status == "indexed"
 
 
