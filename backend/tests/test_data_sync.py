@@ -144,6 +144,13 @@ def test_sync_local_to_prod_auto_strategy_uses_delta_after_successful_run(tmp_pa
     )
     assert first_result.status == "succeeded"
 
+    engine = create_engine(_sqlite_url(target_path), future=True)
+    with Session(engine) as db:
+        sync_run = db.scalars(select(SyncRun)).one()
+        sync_run.source_fingerprint = "syn_old_fingerprint"
+        db.commit()
+    engine.dispose()
+
     changed_at = first_result.finished_at
     engine = create_engine(_sqlite_url(source_path), future=True)
     with Session(engine) as db:

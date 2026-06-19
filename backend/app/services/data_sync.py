@@ -210,6 +210,7 @@ def _watermark_column(table: Table) -> sa.Column[Any] | None:
 def _latest_successful_sync_watermark(
     connection: Connection,
     *,
+    source_database: str,
     source_fingerprint: str,
     table_name: str,
 ) -> datetime | None:
@@ -220,7 +221,10 @@ def _latest_successful_sync_watermark(
             .where(
                 sync_runs.c.mode == "apply",
                 sync_runs.c.status == "succeeded",
-                sync_runs.c.source_fingerprint == source_fingerprint,
+                sa.or_(
+                    sync_runs.c.source_fingerprint == source_fingerprint,
+                    sync_runs.c.source_database == source_database,
+                ),
                 sync_runs.c.finished_at.is_not(None),
             )
             .order_by(sync_runs.c.finished_at.desc())
@@ -578,6 +582,7 @@ def sync_local_to_prod(
                     target_rows_before = _count_rows(target_connection, table)
                     previous_watermark = _latest_successful_sync_watermark(
                         target_connection,
+                        source_database=source_database,
                         source_fingerprint=source_fingerprint,
                         table_name=table_name,
                     )
