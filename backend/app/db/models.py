@@ -77,12 +77,12 @@ class SourceRecord(Base):
 class SourceRecordFact(Base):
     __tablename__ = "source_record_facts"
     __table_args__ = (
-        UniqueConstraint(
+        Index(
+            "ix_source_record_facts_record_field_value",
             "source_record_code",
             "entity_kind",
             "field_name",
             "normalized_value",
-            name="uq_source_record_facts_record_field_value",
         ),
     )
 

@@ -119,6 +119,7 @@ sync-local-to-prod \
 
 The sync writes `sync_runs` rows in production for applied runs and refreshes the Postgres `image_embedding_vectors` pgvector index after `image_embeddings` are synced.
 For laptop-driven syncs into the single-VM Docker stack, connect through a private SSH tunnel or another reachable PostgreSQL URL; the VM `.env` `BPV_DATABASE_URL` uses the Docker-internal `postgres` hostname.
+Do not deduplicate `source_record_facts` by record/field/value before sync; repeated facts can carry distinct product, ingredient, or source URL context and are keyed by `fact_code`.
 
 Synced tables, in dependency order:
 

@@ -13,6 +13,7 @@ from app.db.models import (
     ProductSourceLink,
     ScanJob,
     SourceRecord,
+    SourceRecordFact,
 )
 from app.services.normalization import normalize_text
 from app.services.scanner import process_scan
@@ -64,6 +65,20 @@ def test_test_sqlite_engine_enables_foreign_keys():
 )
 def test_model_metadata_declares_audit_unique_indexes(model, expected_columns):
     assert frozenset(expected_columns) in _unique_column_sets(model)
+
+
+def test_source_record_fact_lookup_is_not_unique() -> None:
+    lookup_columns = frozenset(
+        ("source_record_code", "entity_kind", "field_name", "normalized_value")
+    )
+
+    assert lookup_columns not in _unique_column_sets(SourceRecordFact)
+    assert any(
+        index.name == "ix_source_record_facts_record_field_value"
+        and not index.unique
+        and frozenset(column.name for column in index.columns) == lookup_columns
+        for index in SourceRecordFact.__table__.indexes
+    )
 
 
 def test_source_record_upsert_keeps_record_type_in_identity(db_session: Session):
