@@ -259,6 +259,45 @@ def _risk_summaries(db: Session, products: list[Product], profile: dict) -> dict
     return summaries
 
 
+def _directory_risk_summaries(db: Session, product_codes: list[str]) -> dict[str, dict]:
+    summaries = {
+        product_code: {
+            "severity": "unknown",
+            "score": 0,
+            "matched_ingredient_count": 0,
+            "side_effects": [],
+        }
+        for product_code in product_codes
+    }
+    if not product_codes:
+        return summaries
+
+    rows = db.execute(
+        select(
+            ProductIngredient.product_code,
+            func.coalesce(func.max(RiskRule.severity_score), 0).label("score"),
+            func.count(func.distinct(RiskRule.ingredient_code)).label("matched_ingredient_count"),
+        )
+        .join(
+            RiskRule,
+            RiskRule.ingredient_code == ProductIngredient.ingredient_code,
+        )
+        .where(
+            ProductIngredient.product_code.in_(product_codes),
+            RiskRule.active.is_(True),
+        )
+        .group_by(ProductIngredient.product_code)
+    ).all()
+    for product_code, score, matched_ingredient_count in rows:
+        summaries[product_code] = {
+            "severity": SEVERITY_LABELS.get(score, "unknown"),
+            "score": score,
+            "matched_ingredient_count": matched_ingredient_count,
+            "side_effects": [],
+        }
+    return summaries
+
+
 def _brand_facets(db: Session, payload: DirectoryProductsIn) -> list[DirectoryFacetOut]:
     rows = db.execute(
         select(Brand, func.count(func.distinct(Product.product_code)).label("product_count"))
@@ -322,41 +361,30 @@ def _risk_sorted_product_codes(
     if candidate_limit <= 0:
         return []
 
-    candidate_codes = db.scalars(
-        select(Product.product_code)
+    candidate_rows = db.execute(
+        select(Product.product_code, Product.normalized_name)
         .outerjoin(Brand, Product.brand_code == Brand.brand_code)
         .where(*filters)
         .order_by(desc(Product.confidence_score), Product.normalized_name, Product.product_code)
         .limit(candidate_limit)
     ).all()
+    candidate_codes = [row.product_code for row in candidate_rows]
     if not candidate_codes:
         return []
 
-    candidates = (
-        db.scalars(
-            select(Product)
-            .where(Product.product_code.in_(candidate_codes))
-            .options(*_directory_product_options())
-        )
-        .unique()
-        .all()
-    )
-    products_by_code = {product.product_code: product for product in candidates}
-    ordered_candidates = [
-        products_by_code[code] for code in candidate_codes if code in products_by_code
-    ]
-    risk_by_code = _risk_summaries(db, ordered_candidates, payload.profile.model_dump())
+    risk_by_code = _directory_risk_summaries(db, candidate_codes)
+    ordered_candidates = list(candidate_rows)
     ordered_candidates.sort(
-        key=lambda product: (
-            -risk_by_code[product.product_code]["score"],
-            -risk_by_code[product.product_code]["matched_ingredient_count"],
-            product.normalized_name,
-            product.product_code,
+        key=lambda row: (
+            -risk_by_code[row.product_code]["score"],
+            -risk_by_code[row.product_code]["matched_ingredient_count"],
+            row.normalized_name,
+            row.product_code,
         )
     )
     return [
-        product.product_code
-        for product in ordered_candidates[payload.offset : payload.offset + payload.limit]
+        row.product_code
+        for row in ordered_candidates[payload.offset : payload.offset + payload.limit]
     ]
 
 
@@ -492,8 +520,7 @@ def list_directory_products(payload: DirectoryProductsIn, db: Session = Depends(
             .all()
         }
     products = [products_by_code[code] for code in product_codes if code in products_by_code]
-    profile = payload.profile.model_dump()
-    risk_by_code = _risk_summaries(db, products, profile)
+    risk_by_code = _directory_risk_summaries(db, product_codes)
     summaries = []
     for product in products:
         risk = risk_by_code[product.product_code]
