@@ -6,6 +6,7 @@ ENV PYTHONUNBUFFERED=1
 
 COPY pyproject.toml ./
 COPY app ./app
+COPY shared ./shared
 COPY alembic.ini ./
 COPY alembic ./alembic
 

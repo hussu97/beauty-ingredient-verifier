@@ -7,12 +7,23 @@ from typing import Any
 
 from app.services.normalization import normalize_text
 
-PROFILE_OPTIONS_PATH = Path(__file__).resolve().parents[3] / "shared" / "profile-options.json"
+PROFILE_OPTIONS_PATHS = (
+    Path(__file__).resolve().parents[3] / "shared" / "profile-options.json",
+    Path(__file__).resolve().parents[2] / "shared" / "profile-options.json",
+)
+
+
+def _profile_options_path() -> Path:
+    for path in PROFILE_OPTIONS_PATHS:
+        if path.exists():
+            return path
+    searched = ", ".join(str(path) for path in PROFILE_OPTIONS_PATHS)
+    raise FileNotFoundError(f"profile options file not found; searched: {searched}")
 
 
 @lru_cache(maxsize=1)
 def load_profile_options() -> dict[str, Any]:
-    return json.loads(PROFILE_OPTIONS_PATH.read_text(encoding="utf-8"))
+    return json.loads(_profile_options_path().read_text(encoding="utf-8"))
 
 
 @lru_cache(maxsize=1)

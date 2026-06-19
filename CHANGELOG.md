@@ -4,6 +4,7 @@
 
 ### Backend
 - Added production-only Sentry initialization for the FastAPI app with environment, release, trace, and profiling configuration.
+- Fixed production profile-vocabulary loading in `POST /risk/evaluate` by vendoring `profile-options.json` into the backend Docker build context and resolving both local and container paths.
 - Hardened `POST /risk/evaluate` so PDP risk results still return when optional audit persistence fails, and normalized source-derived rule side-effect metadata before serialization.
 - Reworked `POST /products/directory/products` into the unified directory listing endpoint with search, multi-brand filters, multi-category filters, sort, pagination, source/category labels, and brand/category facet counts.
 - Reduced PLP query fanout by using SQLAlchemy filtered/grouped queries plus select-in eager loading and batch risk summary calculation for returned page products.
@@ -14,11 +15,13 @@
 - Replaced the old separate brand/category directory selector with a single ecommerce-style PLP containing search, facet filters with counts, sort controls, pagination, product images, source labels, and profile-aware warning badges.
 
 ### Docs
+- Documented backend and frontend profile-vocabulary vendoring for isolated production build contexts.
 - Documented best-effort PDP risk evaluation audit persistence in README, architecture, and production notes.
 - Documented Sentry production DSNs, environment variables, deploy wiring, and default local-disabled behavior.
 - Updated README, ARCHITECTURE, and PRODUCTION to document the single PLP endpoint and the new production Sentry configuration.
 
 ### Tests
+- Added backend coverage that the API Docker-context profile vocabulary matches the shared source vocabulary.
 - Added backend regression coverage for risk evaluation when audit persistence fails or source-derived rule side-effect metadata is malformed.
 - Added backend and frontend coverage for production-only Sentry initialization and sampling config.
 - Added backend coverage for directory filters, sort, selected facets, and facet counts.

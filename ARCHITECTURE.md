@@ -18,7 +18,7 @@ The backend is organized around FastAPI routers:
 
 SQLAlchemy models use code primary keys (`prd_*`, `ing_*`, etc.) and UTC-aware timestamp columns. JSON source payloads are stored as SQLAlchemy JSON locally and can map to PostgreSQL JSONB later.
 
-Clinical profile values are controlled by `shared/profile-options.json`. The frontend vendors the same vocabulary under `frontend/src/data/profile-options.json` because Vercel builds are rooted at `frontend/` and cannot import files above that project root. The frontend renders those values as custom single/multi-select dropdowns, and the backend canonicalizes profile aliases before rule matching so values such as `perfume`, `baby`, `kid`, `natural rubber`, or `MI` resolve to the rule-supported canonical profile terms.
+Clinical profile values are controlled by `shared/profile-options.json`. The frontend vendors the same vocabulary under `frontend/src/data/profile-options.json` because Vercel builds are rooted at `frontend/`, and the backend vendors it under `backend/shared/profile-options.json` because the API Docker image is built from the `backend/` context. The frontend renders those values as custom single/multi-select dropdowns, and the backend canonicalizes profile aliases before rule matching so values such as `perfume`, `baby`, `kid`, `natural rubber`, or `MI` resolve to the rule-supported canonical profile terms.
 
 ## Database
 

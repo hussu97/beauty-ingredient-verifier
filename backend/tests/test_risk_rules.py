@@ -1,7 +1,10 @@
+from pathlib import Path
+
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.db.models import RiskRule
+from app.services import profile_options
 from app.services.enrichment import seed_reference_sources_and_rules
 from app.services.importers.open_beauty_facts import import_product_payload
 from app.services.profile_options import (
@@ -34,6 +37,33 @@ PRODUCT_KEYWORDS_BY_RULE = {
     "sccs-mi-leave-on-hair-context": "Leave-on hair serum",
     "fda-formaldehyde-hair-smoothing": "Keratin hair smoothing treatment",
 }
+
+
+def test_backend_profile_options_copy_matches_shared_vocabulary():
+    backend_root = Path(__file__).resolve().parents[1]
+    repo_root = backend_root.parent
+    assert (backend_root / "shared" / "profile-options.json").read_text(encoding="utf-8") == (
+        repo_root / "shared" / "profile-options.json"
+    ).read_text(encoding="utf-8")
+
+
+def test_profile_options_loader_uses_backend_copy_when_repo_shared_is_unavailable(monkeypatch):
+    backend_root = Path(__file__).resolve().parents[1]
+    monkeypatch.setattr(
+        profile_options,
+        "PROFILE_OPTIONS_PATHS",
+        (
+            backend_root / "missing" / "profile-options.json",
+            backend_root / "shared" / "profile-options.json",
+        ),
+    )
+    profile_options.load_profile_options.cache_clear()
+    profile_options.profile_alias_index.cache_clear()
+
+    assert profile_options.load_profile_options()["version"] == "2026-06-18.1"
+
+    profile_options.load_profile_options.cache_clear()
+    profile_options.profile_alias_index.cache_clear()
 
 
 def _first_ingredient_name(rule: dict) -> str:

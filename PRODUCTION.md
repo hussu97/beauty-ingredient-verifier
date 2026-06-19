@@ -21,7 +21,7 @@ Create the Vercel project `beauty-ingredient-verifier` from `frontend/`.
 - Env: `VITE_API_BASE_URL=https://<api-domain>/api/v1`
 - Sentry: production builds initialize the frontend Sentry project for org `melting-moments` (`4511214385364992`) with `VITE_SENTRY_DSN`; the checked-in production fallback DSN is `https://4321d8269749044df11524e167d5f267@o4511214385364992.ingest.us.sentry.io/4511591614644224`.
 
-`frontend/vercel.json` rewrites SPA routes to `index.html`. Keep frontend secrets in Vercel only; do not copy backend database or deploy secrets into Vercel. The frontend includes `frontend/src/data/profile-options.json`, a vendored copy of `shared/profile-options.json`, because Vercel builds are rooted at `frontend/`.
+`frontend/vercel.json` rewrites SPA routes to `index.html`. Keep frontend secrets in Vercel only; do not copy backend database or deploy secrets into Vercel. The frontend includes `frontend/src/data/profile-options.json`, a vendored copy of `shared/profile-options.json`, because Vercel builds are rooted at `frontend/`. The backend image likewise includes `backend/shared/profile-options.json` because GitHub Actions builds the API image from the `backend/` Docker context.
 
 The production `/directory` page uses `POST /api/v1/products/directory/products` as the single PLP listing endpoint for search, brand/category filters, sort, pagination, and facet counts.
 
