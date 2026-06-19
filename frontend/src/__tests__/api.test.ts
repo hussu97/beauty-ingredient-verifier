@@ -202,19 +202,7 @@ describe("directory API", () => {
     vi.unstubAllGlobals();
   });
 
-  it("passes search text when loading directory groups", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
-      expect(url).toContain("/products/directory/groups?kind=brand&q=mac");
-      return new Response(JSON.stringify([]), { status: 200 });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await api.directoryGroups("brand", "mac");
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-  });
-
-  it("sends limit and offset for paged directory products", async () => {
+  it("sends unified filters for paged directory products", async () => {
     const profile: ClinicalProfile = {
       skin_types: ["sensitive"],
       hair_types: [],
@@ -229,8 +217,10 @@ describe("directory API", () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
       expect(body).toMatchObject({
-        group_kind: "brand",
-        group_code: "brd_1",
+        q: "rose",
+        brand_codes: ["brd_1"],
+        category_codes: ["cat_1"],
+        sort: "name_asc",
         limit: 12,
         offset: 24,
       });
@@ -239,11 +229,19 @@ describe("directory API", () => {
         total: 30,
         limit: 12,
         offset: 24,
+        sort: "name_asc",
+        brand_facets: [],
+        category_facets: [],
       }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const page = await api.directoryProducts("brand", "brd_1", profile, {
+    const page = await api.directoryProducts({
+      q: "rose",
+      brand_codes: ["brd_1"],
+      category_codes: ["cat_1"],
+      sort: "name_asc",
+      profile,
       limit: 12,
       offset: 24,
     });

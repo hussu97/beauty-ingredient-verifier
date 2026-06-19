@@ -1,6 +1,6 @@
 import type {
   ClinicalProfile,
-  DirectoryGroup,
+  DirectoryProductFilters,
   DirectoryProductsPage,
   ImportStatus,
   IngredientDetail,
@@ -240,25 +240,10 @@ export const api = {
   products: (q?: string) =>
     request<Product[]>(`/products${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   product: (productCode: string) => request<ProductDetail>(`/products/${productCode}`),
-  directoryGroups: (kind: "brand" | "category", q?: string) =>
-    request<DirectoryGroup[]>(
-      `/products/directory/groups?kind=${kind}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
-    ),
-  directoryProducts: (
-    groupKind: "brand" | "category",
-    groupCode: string,
-    profile: ClinicalProfile,
-    pagination: { limit: number; offset: number } = { limit: 24, offset: 0 },
-  ) =>
+  directoryProducts: (filters: DirectoryProductFilters) =>
     request<DirectoryProductsPage>("/products/directory/products", {
       method: "POST",
-      body: JSON.stringify({
-        group_kind: groupKind,
-        group_code: groupCode,
-        profile,
-        limit: pagination.limit,
-        offset: pagination.offset,
-      }),
+      body: JSON.stringify(filters),
     }),
   ingredients: (q?: string) =>
     request<IngredientSummary[]>(`/ingredients${q ? `?q=${encodeURIComponent(q)}` : ""}`),

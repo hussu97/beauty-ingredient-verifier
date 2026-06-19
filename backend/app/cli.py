@@ -288,25 +288,36 @@ def refresh_risk_signals_command(
 
 @app.command("sync-local-to-prod")
 def sync_local_to_prod_command(
-    local_db: str = typer.Option(
-        ...,
+    local_db: str | None = typer.Option(
+        None,
         "--local-db",
-        help="Canonical local SQLite SQLAlchemy URL, e.g. sqlite:///./storage/beauty_product_verifier.sqlite3.",
+        help=(
+            "Canonical local SQLite SQLAlchemy URL. Defaults to BPV_SYNC_LOCAL_DATABASE_URL, "
+            "then BPV_DATABASE_URL."
+        ),
     ),
-    prod_db: str = typer.Option(
-        ...,
+    prod_db: str | None = typer.Option(
+        None,
         "--prod-db",
-        help="Production PostgreSQL SQLAlchemy URL.",
+        help="Production PostgreSQL SQLAlchemy URL. Defaults to BPV_SYNC_PROD_DATABASE_URL.",
     ),
-    tables: str = typer.Option(
-        "all",
+    tables: str | None = typer.Option(
+        None,
         "--tables",
-        help="Comma-separated sync table list or 'all'. Runtime scan/evaluation tables are forbidden.",
+        help=(
+            "Comma-separated sync table list or 'all'. Defaults to BPV_SYNC_TABLES. "
+            "Runtime scan/evaluation tables are forbidden."
+        ),
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Count rows without writing to production."),
     apply: bool = typer.Option(False, "--apply", help="Apply idempotent upserts to production."),
     validate_only: bool = typer.Option(False, "--validate-only", help="Compare local/prod counts without writing."),
-    batch_size: int = typer.Option(500, "--batch-size", min=1),
+    strategy: str | None = typer.Option(
+        None,
+        "--strategy",
+        help="Sync row selection strategy: auto, full, or delta. Defaults to BPV_SYNC_STRATEGY.",
+    ),
+    batch_size: int | None = typer.Option(None, "--batch-size", min=1),
     skip_migrations: bool = typer.Option(
         False,
         "--skip-migrations",
@@ -317,17 +328,29 @@ def sync_local_to_prod_command(
     if selected_modes > 1:
         raise typer.BadParameter("Use only one of --dry-run, --apply, or --validate-only.")
     mode = "apply" if apply else "validate-only" if validate_only else "dry-run"
+    settings = get_settings()
+    resolved_local_db = local_db or settings.sync_local_database_url or settings.database_url
+    resolved_prod_db = prod_db or settings.sync_prod_database_url
+    resolved_tables = tables or settings.sync_tables
+    resolved_strategy = strategy or settings.sync_strategy
+    resolved_batch_size = batch_size or settings.sync_batch_size
+
+    if not resolved_prod_db:
+        raise typer.BadParameter("Provide --prod-db or set BPV_SYNC_PROD_DATABASE_URL in .env.")
+    if resolved_strategy not in {"auto", "full", "delta"}:
+        raise typer.BadParameter("--strategy must be one of: auto, full, delta.")
 
     if mode == "apply" and not skip_migrations:
         console.print("Running Alembic migrations on production database...")
-        run_prod_migrations(prod_db)
+        run_prod_migrations(resolved_prod_db)
 
     result = sync_local_to_prod(
-        local_db_url=local_db,
-        prod_db_url=prod_db,
-        tables=tables,
+        local_db_url=resolved_local_db,
+        prod_db_url=resolved_prod_db,
+        tables=resolved_tables,
         mode=mode,
-        batch_size=batch_size,
+        strategy=resolved_strategy,
+        batch_size=resolved_batch_size,
     )
     console.print_json(data=result.as_dict())
 

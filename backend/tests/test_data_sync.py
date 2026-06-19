@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -122,6 +124,59 @@ def test_sync_local_to_prod_upserts_and_records_run(tmp_path) -> None:
         sync_run = db.scalars(select(SyncRun)).one()
         assert sync_run.status == "succeeded"
         assert sync_run.tables == ["sources", "source_records", "brands", "products"]
+        assert sync_run.row_counts["products"]["strategy"] == "full"
+    engine.dispose()
+
+
+def test_sync_local_to_prod_auto_strategy_uses_delta_after_successful_run(tmp_path) -> None:
+    source_path = tmp_path / "source.sqlite3"
+    target_path = tmp_path / "target.sqlite3"
+    _create_sqlite_db(source_path)
+    _create_sqlite_db(target_path)
+    _seed_catalog(source_path, product_name="Fresh Product")
+
+    first_result = sync_local_to_prod(
+        local_db_url=_sqlite_url(source_path),
+        prod_db_url=_sqlite_url(target_path),
+        tables="sources,source_records,brands,products",
+        mode="apply",
+        batch_size=2,
+    )
+    assert first_result.status == "succeeded"
+
+    changed_at = first_result.finished_at
+    engine = create_engine(_sqlite_url(source_path), future=True)
+    with Session(engine) as db:
+        product = db.get(Product, "prd_test")
+        assert product is not None
+        product.name = "Fresh Product Updated"
+        product.normalized_name = "fresh product updated"
+        product.updated_at = datetime.fromisoformat(changed_at) + timedelta(seconds=1)
+        db.commit()
+    engine.dispose()
+
+    second_result = sync_local_to_prod(
+        local_db_url=_sqlite_url(source_path),
+        prod_db_url=_sqlite_url(target_path),
+        tables="sources,source_records,brands,products",
+        mode="apply",
+        batch_size=2,
+        strategy="auto",
+    )
+
+    assert second_result.status == "succeeded"
+    assert second_result.source_fingerprint == first_result.source_fingerprint
+    assert second_result.row_counts["sources"]["strategy"] == "delta"
+    assert second_result.row_counts["sources"]["selected_source_rows"] == 0
+    assert second_result.row_counts["products"]["strategy"] == "delta"
+    assert second_result.row_counts["products"]["selected_source_rows"] == 1
+    assert second_result.row_counts["products"]["upserted_rows"] == 1
+
+    engine = create_engine(_sqlite_url(target_path), future=True)
+    with Session(engine) as db:
+        product = db.get(Product, "prd_test")
+        assert product is not None
+        assert product.name == "Fresh Product Updated"
     engine.dispose()
 
 

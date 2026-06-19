@@ -1,5 +1,7 @@
+from collections import defaultdict
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Select, and_, case, desc, func, select
+from sqlalchemy import Select, and_, case, desc, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import (
@@ -16,6 +18,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.schemas import (
     CategoryOut,
+    DirectoryFacetOut,
     DirectoryGroupOut,
     DirectoryProductsIn,
     DirectoryProductsPageOut,
@@ -23,7 +26,7 @@ from app.schemas import (
     ProductListOut,
 )
 from app.services.normalization import normalize_text
-from app.services.risk import evaluate_loaded_product_risk
+from app.services.risk import SEVERITY_LABELS, _rule_applies
 from app.services.source_fusion import normalized_product_attributes, product_source_conflicts
 
 router = APIRouter(prefix="/products", tags=["catalog"])
@@ -135,6 +138,170 @@ def _product_detail_payload(db: Session, product: Product) -> dict:
     }
 
 
+def _directory_product_options() -> tuple:
+    return (
+        *_product_options(),
+        selectinload(Product.source_links).selectinload(ProductSourceLink.source),
+    )
+
+
+def _normalized_codes(values: list[str]) -> list[str]:
+    seen = set()
+    codes = []
+    for value in values:
+        code = value.strip()
+        if code and code not in seen:
+            seen.add(code)
+            codes.append(code)
+    return codes
+
+
+def _directory_filters(
+    payload: DirectoryProductsIn,
+    *,
+    include_brand: bool = True,
+    include_category: bool = True,
+) -> list:
+    filters = []
+    if payload.q:
+        raw_query = payload.q.strip()
+        if raw_query:
+            normalized_query = normalize_text(raw_query)
+            normalized = f"%{normalized_query}%"
+            raw_like = f"%{raw_query}%"
+            category_match = Product.categories.any(
+                ProductCategory.category.has(
+                    or_(
+                        Category.slug.like(normalized),
+                        func.lower(Category.name).like(normalized),
+                    )
+                )
+            )
+            filters.append(
+                or_(
+                    Product.normalized_name.like(normalized),
+                    Product.product_code.like(raw_like),
+                    Product.barcode.like(raw_like),
+                    Product.brand.has(Brand.normalized_name.like(normalized)),
+                    category_match,
+                )
+            )
+    if include_brand and payload.brand_codes:
+        filters.append(Product.brand_code.in_(payload.brand_codes))
+    if include_category and payload.category_codes:
+        filters.append(Product.categories.any(ProductCategory.category_code.in_(payload.category_codes)))
+    return filters
+
+
+def _coerce_directory_payload(payload: DirectoryProductsIn) -> DirectoryProductsIn:
+    payload.brand_codes = _normalized_codes(payload.brand_codes)
+    payload.category_codes = _normalized_codes(payload.category_codes)
+    if payload.group_kind == "brand" and payload.group_code:
+        payload.brand_codes = _normalized_codes([*payload.brand_codes, payload.group_code])
+    if payload.group_kind == "category" and payload.group_code:
+        payload.category_codes = _normalized_codes([*payload.category_codes, payload.group_code])
+    return payload
+
+
+def _source_labels(product: Product) -> list[str]:
+    labels = {
+        link.source.name if link.source else link.source_code
+        for link in product.source_links
+        if link.active
+    }
+    return sorted(labels)
+
+
+def _category_labels(product: Product) -> list[str]:
+    labels = {link.category.name for link in product.categories if link.category}
+    return sorted(labels)
+
+
+def _risk_summaries(db: Session, products: list[Product], profile: dict) -> dict[str, dict]:
+    ingredient_codes = sorted(
+        {
+            link.ingredient_code
+            for product in products
+            for link in product.ingredients
+            if link.ingredient_code
+        }
+    )
+    if ingredient_codes:
+        rules = db.scalars(
+            select(RiskRule)
+            .where(RiskRule.ingredient_code.in_(ingredient_codes), RiskRule.active.is_(True))
+            .options(selectinload(RiskRule.ingredient))
+        ).all()
+    else:
+        rules = []
+    rules_by_ingredient: dict[str, list[RiskRule]] = defaultdict(list)
+    for rule in rules:
+        rules_by_ingredient[rule.ingredient_code].append(rule)
+
+    summaries = {}
+    for product in products:
+        candidate_rules = [
+            rule
+            for ingredient in product.ingredients
+            for rule in rules_by_ingredient.get(ingredient.ingredient_code, [])
+        ]
+        matched = [rule for rule in candidate_rules if _rule_applies(rule, product, profile)]
+        score = max([rule.severity_score for rule in matched], default=0)
+        summaries[product.product_code] = {
+            "severity": SEVERITY_LABELS.get(score, "unknown"),
+            "score": score,
+            "matched_ingredient_count": len({rule.ingredient_code for rule in matched}),
+            "side_effects": sorted({effect for rule in matched for effect in rule.side_effects}),
+        }
+    return summaries
+
+
+def _brand_facets(db: Session, payload: DirectoryProductsIn) -> list[DirectoryFacetOut]:
+    rows = db.execute(
+        select(Brand, func.count(func.distinct(Product.product_code)).label("product_count"))
+        .join(Product, Product.brand_code == Brand.brand_code)
+        .where(*_directory_filters(payload, include_brand=False))
+        .group_by(Brand.brand_code, Brand.name)
+        .order_by(desc("product_count"), Brand.name)
+        .limit(120)
+    ).all()
+    selected = set(payload.brand_codes)
+    return [
+        DirectoryFacetOut(
+            kind="brand",
+            code=brand.brand_code,
+            name=brand.name,
+            product_count=product_count,
+            selected=brand.brand_code in selected,
+        )
+        for brand, product_count in rows
+    ]
+
+
+def _category_facets(db: Session, payload: DirectoryProductsIn) -> list[DirectoryFacetOut]:
+    rows = db.execute(
+        select(Category, func.count(func.distinct(Product.product_code)).label("product_count"))
+        .join(ProductCategory, ProductCategory.category_code == Category.category_code)
+        .join(Product, Product.product_code == ProductCategory.product_code)
+        .where(*_directory_filters(payload, include_category=False))
+        .group_by(Category.category_code, Category.name, Category.slug)
+        .order_by(desc("product_count"), Category.name)
+        .limit(120)
+    ).all()
+    selected = set(payload.category_codes)
+    return [
+        DirectoryFacetOut(
+            kind="category",
+            code=category.category_code,
+            name=category.name,
+            slug=category.slug,
+            product_count=product_count,
+            selected=category.category_code in selected,
+        )
+        for category, product_count in rows
+    ]
+
+
 @router.get("", response_model=list[ProductListOut])
 def list_products(
     q: str | None = Query(default=None),
@@ -234,31 +401,14 @@ def list_directory_groups(
 
 @router.post("/directory/products", response_model=DirectoryProductsPageOut)
 def list_directory_products(payload: DirectoryProductsIn, db: Session = Depends(get_db)) -> dict:
-    product_filter = None
-    if payload.group_kind == "brand":
-        if db.get(Brand, payload.group_code) is None:
-            raise HTTPException(status_code=404, detail="Brand not found")
-        product_filter = Product.brand_code == payload.group_code
-        total_stmt = select(func.count()).select_from(Product).where(product_filter)
-        rank_from = select(Product.product_code)
-    else:
-        if db.get(Category, payload.group_code) is None:
-            raise HTTPException(status_code=404, detail="Category not found")
-        product_filter = ProductCategory.category_code == payload.group_code
-        total_stmt = (
-            select(func.count(func.distinct(Product.product_code)))
-            .select_from(Product)
-            .join(ProductCategory)
-            .where(product_filter)
-        )
-        rank_from = select(Product.product_code).join(ProductCategory)
-
-    total = db.scalar(total_stmt) or 0
+    payload = _coerce_directory_payload(payload)
+    filters = _directory_filters(payload)
+    total = db.scalar(select(func.count()).select_from(Product).where(*filters)) or 0
     coarse_score = func.coalesce(func.max(RiskRule.severity_score), 0).label("coarse_score")
     matched_rule_count = func.count(func.distinct(RiskRule.risk_rule_code)).label("matched_rule_count")
-    window_limit = min(max(payload.limit * 4, payload.limit), 240)
-    rank_rows = db.execute(
-        rank_from.add_columns(coarse_score, matched_rule_count)
+    ranking_stmt = (
+        select(Product.product_code, coarse_score, matched_rule_count)
+        .outerjoin(Brand, Product.brand_code == Brand.brand_code)
         .outerjoin(ProductIngredient, ProductIngredient.product_code == Product.product_code)
         .outerjoin(
             RiskRule,
@@ -267,51 +417,60 @@ def list_directory_products(payload: DirectoryProductsIn, db: Session = Depends(
                 RiskRule.active.is_(True),
             ),
         )
-        .where(product_filter)
-        .group_by(Product.product_code)
-        .order_by(desc("coarse_score"), desc("matched_rule_count"), Product.normalized_name)
+        .where(*filters)
+        .group_by(Product.product_code, Product.normalized_name, Product.confidence_score, Brand.name)
+    )
+    sort_orders = {
+        "risk_desc": (coarse_score.desc(), matched_rule_count.desc(), Product.normalized_name),
+        "name_asc": (Product.normalized_name, Product.product_code),
+        "name_desc": (desc(Product.normalized_name), Product.product_code),
+        "brand_asc": (Brand.name, Product.normalized_name, Product.product_code),
+        "confidence_desc": (desc(Product.confidence_score), Product.normalized_name, Product.product_code),
+    }
+    rank_rows = db.execute(
+        ranking_stmt
+        .order_by(*sort_orders.get(payload.sort, sort_orders["risk_desc"]))
         .offset(payload.offset)
-        .limit(window_limit)
+        .limit(payload.limit)
     ).all()
     product_codes = [row[0] for row in rank_rows]
-    products_by_code = {
-        product.product_code: product
-        for product in db.scalars(
-            select(Product)
-            .where(Product.product_code.in_(product_codes))
-            .options(*_product_options())
-        )
-        .unique()
-        .all()
-    }
+    products_by_code = {}
+    if product_codes:
+        products_by_code = {
+            product.product_code: product
+            for product in db.scalars(
+                select(Product)
+                .where(Product.product_code.in_(product_codes))
+                .options(*_directory_product_options())
+            )
+            .unique()
+            .all()
+        }
     products = [products_by_code[code] for code in product_codes if code in products_by_code]
-    summaries = []
     profile = payload.profile.model_dump()
+    risk_by_code = _risk_summaries(db, products, profile)
+    summaries = []
     for product in products:
-        risk = evaluate_loaded_product_risk(db, product, profile, persist=False)
+        risk = risk_by_code[product.product_code]
         summaries.append(
             {
                 "product": product,
                 "severity": risk["severity"],
                 "score": risk["score"],
-                "matched_ingredient_count": len(risk["matched_ingredients"]),
+                "matched_ingredient_count": risk["matched_ingredient_count"],
                 "side_effects": risk["side_effects"],
+                "source_labels": _source_labels(product),
+                "category_labels": _category_labels(product),
             }
         )
-
-    summaries.sort(
-        key=lambda item: (
-            -item["score"],
-            -item["matched_ingredient_count"],
-            -len(item["side_effects"]),
-            item["product"].name.lower(),
-        )
-    )
     return {
-        "items": summaries[: payload.limit],
+        "items": summaries,
         "total": total,
         "limit": payload.limit,
         "offset": payload.offset,
+        "sort": payload.sort,
+        "brand_facets": _brand_facets(db, payload),
+        "category_facets": _category_facets(db, payload),
     }
 
 

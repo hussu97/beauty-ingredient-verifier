@@ -1,18 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, Building2, ChevronLeft, ChevronRight, Layers3, Search } from "lucide-react";
+import { Boxes, ChevronLeft, ChevronRight, Search, SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { ClinicalProfile, DirectoryGroup } from "../api/types";
+import type { ClinicalProfile, DirectoryFacet, DirectorySort } from "../api/types";
 import ProfilePanel from "../components/ProfilePanel";
 import StatusBadge from "../components/StatusBadge";
 import { firstImageUrl } from "../lib/format";
 import { loadProfile } from "../lib/profile";
 import { severityClass, severityLabel } from "../lib/severity";
 
-type GroupKind = "brand" | "category";
 const PAGE_SIZE = 12;
 const SEARCH_DEBOUNCE_MS = 300;
+
+const sortOptions: Array<{ value: DirectorySort; label: string }> = [
+  { value: "risk_desc", label: "Highest warning" },
+  { value: "name_asc", label: "Name A-Z" },
+  { value: "name_desc", label: "Name Z-A" },
+  { value: "brand_asc", label: "Brand A-Z" },
+  { value: "confidence_desc", label: "Source confidence" },
+];
 
 function useDebouncedValue(value: string, delayMs = SEARCH_DEBOUNCE_MS) {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -37,39 +44,79 @@ function ProductRiskBadge({ severity }: { severity: string }) {
   return <StatusBadge tone={tone}>{severityLabel(severity)}</StatusBadge>;
 }
 
+function toggleCode(codes: string[], code: string) {
+  return codes.includes(code) ? codes.filter((item) => item !== code) : [...codes, code];
+}
+
+function FacetList({
+  title,
+  facets,
+  selectedCodes,
+  onToggle,
+}: {
+  title: string;
+  facets: DirectoryFacet[];
+  selectedCodes: string[];
+  onToggle: (code: string) => void;
+}) {
+  return (
+    <section className="facet-section">
+      <div className="facet-heading">
+        <h2>{title}</h2>
+        <span>{facets.length}</span>
+      </div>
+      <div className="facet-list">
+        {facets.map((facet) => (
+          <label className="facet-row" key={facet.code}>
+            <input
+              checked={selectedCodes.includes(facet.code)}
+              onChange={() => onToggle(facet.code)}
+              type="checkbox"
+            />
+            <span>{facet.name}</span>
+            <small>{facet.product_count}</small>
+          </label>
+        ))}
+        {facets.length === 0 && <div className="empty-state compact">No matching facets.</div>}
+      </div>
+    </section>
+  );
+}
+
 export default function DirectoryPage() {
-  const [kind, setKind] = useState<GroupKind>("brand");
-  const [selectedCode, setSelectedCode] = useState<string | null>(null);
-  const [groupSearch, setGroupSearch] = useState("");
+  const [search, setSearch] = useState("");
+  const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [sort, setSort] = useState<DirectorySort>("risk_desc");
   const [page, setPage] = useState(1);
   const [profile, setProfile] = useState<ClinicalProfile>(() => loadProfile());
   const profileKey = JSON.stringify(profile);
-  const debouncedGroupSearch = useDebouncedValue(groupSearch);
-  const normalizedGroupSearch = (groupSearch.trim() ? debouncedGroupSearch : "").trim();
-
-  const groupsQuery = useQuery({
-    queryKey: ["directory-groups", kind, normalizedGroupSearch],
-    queryFn: () => api.directoryGroups(kind, normalizedGroupSearch || undefined),
-  });
-  const groups = useMemo(() => groupsQuery.data ?? [], [groupsQuery.data]);
-  const selectedGroup = groups.find((group) => group.code === selectedCode) ?? null;
-
-  useEffect(() => {
-    setSelectedCode(null);
-    setGroupSearch("");
-  }, [kind]);
+  const debouncedSearch = useDebouncedValue(search);
+  const normalizedSearch = (search.trim() ? debouncedSearch : "").trim();
 
   useEffect(() => {
     setPage(1);
-  }, [kind, selectedGroup?.code, profileKey]);
+  }, [normalizedSearch, selectedBrands, selectedCategories, sort, profileKey]);
 
   const productsQuery = useQuery({
-    queryKey: ["directory-products", kind, selectedGroup?.code, profileKey, page],
-    queryFn: () => api.directoryProducts(kind, selectedGroup!.code, profile, {
+    queryKey: [
+      "directory-products",
+      normalizedSearch,
+      selectedBrands,
+      selectedCategories,
+      sort,
+      profileKey,
+      page,
+    ],
+    queryFn: () => api.directoryProducts({
+      q: normalizedSearch || undefined,
+      brand_codes: selectedBrands,
+      category_codes: selectedCategories,
+      sort,
+      profile,
       limit: PAGE_SIZE,
       offset: (page - 1) * PAGE_SIZE,
     }),
-    enabled: Boolean(selectedGroup),
   });
   const productPage = productsQuery.data;
   const products = productPage?.items ?? [];
@@ -77,14 +124,19 @@ export default function DirectoryPage() {
   const totalPages = Math.max(1, Math.ceil(totalProducts / PAGE_SIZE));
   const pageStart = totalProducts === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const pageEnd = Math.min(totalProducts, page * PAGE_SIZE);
+  const activeFilters = selectedBrands.length + selectedCategories.length + (normalizedSearch ? 1 : 0);
 
-  function selectKind(nextKind: GroupKind) {
-    setKind(nextKind);
-    setPage(1);
-  }
+  const selectedFacetNames = useMemo(() => {
+    const facets = [...(productPage?.brand_facets ?? []), ...(productPage?.category_facets ?? [])];
+    return facets
+      .filter((facet) => selectedBrands.includes(facet.code) || selectedCategories.includes(facet.code))
+      .map((facet) => facet.name);
+  }, [productPage?.brand_facets, productPage?.category_facets, selectedBrands, selectedCategories]);
 
-  function selectGroup(code: string) {
-    setSelectedCode(code);
+  function clearFilters() {
+    setSearch("");
+    setSelectedBrands([]);
+    setSelectedCategories([]);
     setPage(1);
   }
 
@@ -93,106 +145,120 @@ export default function DirectoryPage() {
       <header className="page-header directory-header">
         <div>
           <span className="eyebrow">Product directory</span>
-          <h1>Browse by brand or category.</h1>
-          <p>Products are ranked by the strongest source-backed warning for the active profile.</p>
+          <h1>Products</h1>
+          <p>{productsQuery.isLoading ? "Loading catalog..." : `${totalProducts} products match the current filters.`}</p>
         </div>
       </header>
 
       <ProfilePanel profile={profile} onChange={setProfile} />
 
-      <section className="directory-layout">
-        <aside className="directory-groups" aria-label={`${kind} groups`}>
-          <div className="directory-kind-switch" role="tablist" aria-label="Directory grouping">
-            <button className={kind === "brand" ? "active" : ""} onClick={() => selectKind("brand")} type="button">
-              <Building2 size={17} />
-              Brands
-            </button>
-            <button className={kind === "category" ? "active" : ""} onClick={() => selectKind("category")} type="button">
-              <Layers3 size={17} />
-              Categories
-            </button>
-          </div>
-          <div className="section-heading compact">
-            <div>
-              <h2>{kind === "brand" ? "Brands" : "Categories"}</h2>
-              <p>{groups.length} groups loaded</p>
-            </div>
-          </div>
-          <label className="search-field directory-search">
-            <Search size={17} />
-            <input
-              aria-label={`Search ${kind === "brand" ? "brands" : "categories"}`}
-              onChange={(event) => setGroupSearch(event.target.value)}
-              placeholder={`Search ${kind === "brand" ? "brands" : "categories"}`}
-              value={groupSearch}
-            />
-          </label>
-          <div className="group-list">
-            {groupsQuery.isLoading && <div className="loading-line">Loading groups...</div>}
-            {groups.map((group: DirectoryGroup) => (
-              <button
-                className={selectedGroup?.code === group.code ? "group-row active" : "group-row"}
-                key={group.code}
-                type="button"
-                onClick={() => selectGroup(group.code)}
-              >
-                <span>{group.name}</span>
-                <small>{group.product_count} products</small>
-              </button>
+      <section className="directory-toolbar" aria-label="Product listing controls">
+        <label className="search-field directory-search">
+          <Search size={17} />
+          <input
+            aria-label="Search products"
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search products, brands, categories, or barcode"
+            value={search}
+          />
+        </label>
+        <label className="sort-control">
+          <span>Sort</span>
+          <select
+            aria-label="Sort products"
+            onChange={(event) => setSort(event.target.value as DirectorySort)}
+            value={sort}
+          >
+            {sortOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
             ))}
-            {!groupsQuery.isLoading && groups.length === 0 && (
-              <div className="empty-state compact">
-                No {kind === "brand" ? "brands" : "categories"} match that search.
-              </div>
+          </select>
+        </label>
+      </section>
+
+      <section className="directory-layout">
+        <aside className="directory-groups" aria-label="Product filters">
+          <div className="filter-summary">
+            <div>
+              <SlidersHorizontal size={18} />
+              <strong>Filters</strong>
+            </div>
+            {activeFilters > 0 && (
+              <button onClick={clearFilters} type="button">
+                <X size={15} />
+                Clear
+              </button>
             )}
           </div>
+          {selectedFacetNames.length > 0 && (
+            <div className="active-filter-list">
+              {selectedFacetNames.map((name) => <span key={name}>{name}</span>)}
+            </div>
+          )}
+          <FacetList
+            facets={productPage?.brand_facets ?? []}
+            onToggle={(code) => setSelectedBrands((current) => toggleCode(current, code))}
+            selectedCodes={selectedBrands}
+            title="Brands"
+          />
+          <FacetList
+            facets={productPage?.category_facets ?? []}
+            onToggle={(code) => setSelectedCategories((current) => toggleCode(current, code))}
+            selectedCodes={selectedCategories}
+            title="Categories"
+          />
         </aside>
 
         <div className="directory-products">
           <div className="section-heading">
             <div>
-              <span className="eyebrow">Ranked PLP</span>
-              <h2>{selectedGroup?.name ?? "Select a group"}</h2>
-              <p>Highest warning levels appear first. Ingredients with no matched rules remain unknown, not cleared.</p>
+              <span className="eyebrow">Catalog PLP</span>
+              <h2>{productsQuery.isFetching ? "Updating products" : "Product grid"}</h2>
+              <p>Risk labels reflect the active profile and source-backed ingredient rules.</p>
             </div>
-            {selectedGroup && (
-              <div className="pagination-summary">
-                {productsQuery.isLoading ? "Ranking..." : `${pageStart}-${pageEnd} of ${totalProducts}`}
-              </div>
-            )}
+            <div className="pagination-summary">
+              {productsQuery.isLoading ? "Loading..." : `${pageStart}-${pageEnd} of ${totalProducts}`}
+            </div>
           </div>
-          <div className="plp-list">
-            {productsQuery.isLoading && <div className="loading-line">Ranking products...</div>}
+          <div className="plp-grid">
+            {productsQuery.isLoading && <div className="loading-line">Loading products...</div>}
             {products.map((item) => {
               const imageUrl = firstImageUrl(item.product.images);
+              const categories = item.category_labels.length > 0
+                ? item.category_labels.slice(0, 2).join(", ")
+                : item.product.category_text ?? "Uncategorized";
               return (
                 <Link
                   to={`/products/${item.product.product_code}`}
-                  className={`plp-row ${severityClass(item.severity)}`}
+                  className={`plp-card ${severityClass(item.severity)}`}
                   key={item.product.product_code}
                 >
-                  <div className="row-image">
+                  <div className="tile-image">
                     {imageUrl ? <img src={imageUrl} alt={item.product.name} /> : <span>{item.product.name.slice(0, 2)}</span>}
                   </div>
-                  <div className="plp-copy">
-                    <strong>{item.product.name}</strong>
-                    <span>{item.product.brand?.name ?? "Unknown brand"}</span>
-                    <small>{item.product.category_text ?? "Uncategorized product"}</small>
+                  <div className="plp-card-copy">
+                    <div>
+                      <strong>{item.product.name}</strong>
+                      <span>{item.product.brand?.name ?? "Unknown brand"}</span>
+                    </div>
+                    <small>{categories}</small>
                   </div>
-                  <div className="plp-risk">
+                  <div className="plp-card-meta">
                     <ProductRiskBadge severity={item.severity} />
                     <span>{item.matched_ingredient_count} flagged ingredients</span>
-                    {item.side_effects.length > 0 && <small>{item.side_effects.slice(0, 3).join(", ")}</small>}
+                  </div>
+                  <div className="source-chip-list compact">
+                    {(item.source_labels.length > 0 ? item.source_labels : ["Unknown source"]).slice(0, 3).map((label) => (
+                      <span className="source-chip" key={label}>{label}</span>
+                    ))}
                   </div>
                 </Link>
               );
             })}
             {!productsQuery.isLoading && products.length === 0 && (
-              <div className="empty-state">
+              <div className="empty-state plp-empty">
                 <Boxes size={22} />
-                {selectedGroup
-                  ? "No products found for this group yet."
-                  : `Select a ${kind === "brand" ? "brand" : "category"} to rank products.`}
+                No products match these filters.
               </div>
             )}
           </div>

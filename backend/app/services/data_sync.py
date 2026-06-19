@@ -20,6 +20,7 @@ from app.db.models import Base, SyncRun
 from app.services.codes import make_code, stable_hash
 
 SyncMode = Literal["dry-run", "apply", "validate-only"]
+SyncStrategy = Literal["auto", "full", "delta"]
 
 RUNTIME_TABLE_NAMES = frozenset(
     {
@@ -59,10 +60,15 @@ POSTGRES_VECTOR_DIMENSIONS = 512
 class TableSyncResult:
     table: str
     source_rows: int
+    selected_source_rows: int
     target_rows_before: int
     target_rows_after: int
     upserted_rows: int = 0
     matched: bool = False
+    strategy: str = "full"
+    watermark_column: str | None = None
+    watermark_value: str | None = None
+    full_bootstrap: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,7 +79,7 @@ class CatalogSyncResult:
     source_database: str
     source_fingerprint: str
     tables: list[str]
-    row_counts: dict[str, dict[str, int | bool]]
+    row_counts: dict[str, dict[str, Any]]
     started_at: str
     finished_at: str
     failure_message: str | None = None
@@ -120,10 +126,6 @@ def source_database_identity(database_url: str) -> tuple[str, str]:
         if not path.is_absolute():
             path = (Path.cwd() / path).resolve()
         identity["path"] = str(path)
-        if path.exists():
-            stat = path.stat()
-            identity["size_bytes"] = stat.st_size
-            identity["mtime_ns"] = stat.st_mtime_ns
 
     return safe_url, stable_hash(identity, length=24)
 
@@ -152,21 +154,83 @@ def _count_rows(connection: Connection, table: Table) -> int:
     return int(connection.scalar(select(func.count()).select_from(table)) or 0)
 
 
-def _ordered_select(table: Table) -> sa.Select[Any]:
+def _count_selected_rows(
+    connection: Connection,
+    table: Table,
+    *,
+    watermark_column: sa.Column[Any] | None = None,
+    watermark_value: datetime | None = None,
+) -> int:
+    statement = select(func.count()).select_from(table)
+    if watermark_column is not None and watermark_value is not None:
+        statement = statement.where(watermark_column >= watermark_value)
+    return int(connection.scalar(statement) or 0)
+
+
+def _ordered_select(
+    table: Table,
+    *,
+    watermark_column: sa.Column[Any] | None = None,
+    watermark_value: datetime | None = None,
+) -> sa.Select[Any]:
     primary_key_columns = list(table.primary_key.columns)
     statement = select(table)
+    if watermark_column is not None and watermark_value is not None:
+        statement = statement.where(watermark_column >= watermark_value)
     if primary_key_columns:
         statement = statement.order_by(*primary_key_columns)
     return statement
 
 
-def _row_batches(connection: Connection, table: Table, batch_size: int):
-    result = connection.execution_options(stream_results=True).execute(_ordered_select(table))
+def _row_batches(
+    connection: Connection,
+    table: Table,
+    batch_size: int,
+    *,
+    watermark_column: sa.Column[Any] | None = None,
+    watermark_value: datetime | None = None,
+):
+    result = connection.execution_options(stream_results=True).execute(
+        _ordered_select(table, watermark_column=watermark_column, watermark_value=watermark_value)
+    )
     while True:
         rows = result.fetchmany(batch_size)
         if not rows:
             break
         yield [dict(row._mapping) for row in rows]
+
+
+def _watermark_column(table: Table) -> sa.Column[Any] | None:
+    for column_name in ("updated_at", "created_at", "fetched_at", "source_updated_at"):
+        if column_name in table.c:
+            return table.c[column_name]
+    return None
+
+
+def _latest_successful_sync_watermark(
+    connection: Connection,
+    *,
+    source_fingerprint: str,
+    table_name: str,
+) -> datetime | None:
+    sync_runs = SyncRun.__table__
+    try:
+        rows = connection.execute(
+            select(sync_runs.c.finished_at, sync_runs.c.tables)
+            .where(
+                sync_runs.c.mode == "apply",
+                sync_runs.c.status == "succeeded",
+                sync_runs.c.source_fingerprint == source_fingerprint,
+                sync_runs.c.finished_at.is_not(None),
+            )
+            .order_by(sync_runs.c.finished_at.desc())
+        )
+    except sa.exc.DBAPIError:
+        return None
+    for finished_at, tables in rows:
+        if table_name in (tables or []):
+            return finished_at
+    return None
 
 
 def _insert_for_target(connection: Connection, table: Table):
@@ -183,6 +247,9 @@ def _insert_for_target(connection: Connection, table: Table):
 def _upsert_batch(connection: Connection, table: Table, rows: list[dict[str, Any]]) -> int:
     if not rows:
         return 0
+
+    if connection.dialect.name == "postgresql":
+        return _upsert_batch_postgres_temp(connection, table, rows)
 
     primary_key_names = [column.name for column in table.primary_key.columns]
     if not primary_key_names:
@@ -202,6 +269,119 @@ def _upsert_batch(connection: Connection, table: Table, rows: list[dict[str, Any
         )
 
     connection.execute(insert_statement)
+    return len(rows)
+
+
+def _quote_identifier(connection: Connection, identifier: str) -> str:
+    return connection.dialect.identifier_preparer.quote(identifier)
+
+
+def _copy_value(value: Any, column: sa.Column[Any]) -> Any:
+    if value is None:
+        return None
+    if isinstance(column.type, sa.JSON):
+        return json.dumps(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _copy_rows_to_temp_postgres(
+    connection: Connection,
+    *,
+    temp_name: str,
+    table: Table,
+    rows: list[dict[str, Any]],
+) -> bool:
+    driver_connection = getattr(connection.connection, "driver_connection", None)
+    if driver_connection is None or not hasattr(driver_connection, "cursor"):
+        return False
+
+    columns = list(table.columns)
+    quoted_columns = ", ".join(_quote_identifier(connection, column.name) for column in columns)
+    copy_sql = f"COPY {_quote_identifier(connection, temp_name)} ({quoted_columns}) FROM STDIN"
+    nested = connection.begin_nested()
+    try:
+        with driver_connection.cursor() as cursor:
+            with cursor.copy(copy_sql) as copy:
+                for row in rows:
+                    copy.write_row(
+                        tuple(_copy_value(row.get(column.name), column) for column in columns)
+                    )
+        nested.commit()
+        return True
+    except Exception:
+        nested.rollback()
+        return False
+
+
+def _insert_rows_to_temp(
+    connection: Connection,
+    *,
+    temp_name: str,
+    table: Table,
+    rows: list[dict[str, Any]],
+) -> None:
+    temp_metadata = sa.MetaData()
+    temp_table = sa.Table(
+        temp_name,
+        temp_metadata,
+        *(sa.Column(column.name, column.type) for column in table.columns),
+    )
+    connection.execute(temp_table.insert(), rows)
+
+
+def _upsert_batch_postgres_temp(
+    connection: Connection,
+    table: Table,
+    rows: list[dict[str, Any]],
+) -> int:
+    primary_key_names = [column.name for column in table.primary_key.columns]
+    if not primary_key_names:
+        raise ValueError(f"Cannot sync {table.name}; table has no primary key")
+
+    temp_hash = stable_hash({"first": rows[0], "last": rows[-1]}, length=8)
+    temp_name = f"_bpv_sync_{table.name}_{temp_hash}"
+    quoted_temp = _quote_identifier(connection, temp_name)
+    quoted_table = _quote_identifier(connection, table.name)
+    connection.execute(
+        sa.text(
+            f"CREATE TEMP TABLE {quoted_temp} (LIKE {quoted_table} INCLUDING DEFAULTS) ON COMMIT DROP"
+        )
+    )
+
+    copied = _copy_rows_to_temp_postgres(connection, temp_name=temp_name, table=table, rows=rows)
+    if not copied:
+        _insert_rows_to_temp(connection, temp_name=temp_name, table=table, rows=rows)
+
+    column_names = [column.name for column in table.columns]
+    quoted_columns = ", ".join(_quote_identifier(connection, name) for name in column_names)
+    select_columns = ", ".join(_quote_identifier(connection, name) for name in column_names)
+    conflict_columns = ", ".join(_quote_identifier(connection, name) for name in primary_key_names)
+    update_columns = [name for name in column_names if name not in primary_key_names]
+
+    if update_columns:
+        update_sql = ", ".join(
+            f"{_quote_identifier(connection, name)} = EXCLUDED.{_quote_identifier(connection, name)}"
+            for name in update_columns
+        )
+        conflict_sql = f"DO UPDATE SET {update_sql}"
+    else:
+        conflict_sql = "DO NOTHING"
+
+    try:
+        connection.execute(
+            sa.text(
+                f"""
+                INSERT INTO {quoted_table} ({quoted_columns})
+                SELECT {select_columns}
+                FROM {quoted_temp}
+                ON CONFLICT ({conflict_columns}) {conflict_sql}
+                """
+            )
+        )
+    finally:
+        connection.execute(sa.text(f"DROP TABLE IF EXISTS {quoted_temp}"))
     return len(rows)
 
 
@@ -238,7 +418,7 @@ def _finish_sync_run(
     *,
     sync_run_code: str,
     status: str,
-    row_counts: dict[str, dict[str, int | bool]],
+    row_counts: dict[str, dict[str, Any]],
     failure_message: str | None,
     finished_at: datetime,
 ) -> None:
@@ -345,11 +525,14 @@ def sync_local_to_prod(
     prod_db_url: str,
     tables: str | list[str] | tuple[str, ...] | None = "all",
     mode: SyncMode = "dry-run",
+    strategy: SyncStrategy = "auto",
     batch_size: int = 500,
     record_run: bool = True,
 ) -> CatalogSyncResult:
     if mode not in {"dry-run", "apply", "validate-only"}:
         raise ValueError(f"Unknown sync mode: {mode}")
+    if strategy not in {"auto", "full", "delta"}:
+        raise ValueError(f"Unknown sync strategy: {strategy}")
     if batch_size < 1:
         raise ValueError("batch_size must be at least 1")
 
@@ -371,7 +554,7 @@ def sync_local_to_prod(
 
     source_engine = create_engine(local_db_url, future=True)
     target_engine = create_engine(prod_db_url, future=True)
-    row_counts: dict[str, dict[str, int | bool]] = {}
+    row_counts: dict[str, dict[str, Any]] = {}
     failure_message: str | None = None
     status = "running" if mode == "apply" else mode
 
@@ -393,11 +576,44 @@ def sync_local_to_prod(
                 source_rows = _count_rows(source_connection, table)
                 with target_engine.connect() as target_connection:
                     target_rows_before = _count_rows(target_connection, table)
+                    previous_watermark = _latest_successful_sync_watermark(
+                        target_connection,
+                        source_fingerprint=source_fingerprint,
+                        table_name=table_name,
+                    )
+
+                watermark_column = _watermark_column(table)
+                selected_strategy = "full"
+                watermark_value = None
+                full_bootstrap = False
+                if strategy in {"auto", "delta"} and watermark_column is not None:
+                    if previous_watermark is not None and target_rows_before > 0:
+                        selected_strategy = "delta"
+                        watermark_value = previous_watermark
+                    else:
+                        full_bootstrap = True
+                elif strategy == "delta":
+                    full_bootstrap = True
+
+                selected_rows = _count_selected_rows(
+                    source_connection,
+                    table,
+                    watermark_column=watermark_column if selected_strategy == "delta" else None,
+                    watermark_value=watermark_value,
+                )
 
                 upserted_rows = 0
                 if mode == "apply":
                     with target_engine.begin() as target_connection:
-                        for batch in _row_batches(source_connection, table, batch_size):
+                        for batch in _row_batches(
+                            source_connection,
+                            table,
+                            batch_size,
+                            watermark_column=watermark_column
+                            if selected_strategy == "delta"
+                            else None,
+                            watermark_value=watermark_value,
+                        ):
                             upserted_rows += _upsert_batch(target_connection, table, batch)
 
                 with target_engine.connect() as target_connection:
@@ -407,10 +623,15 @@ def sync_local_to_prod(
                     TableSyncResult(
                         table=table_name,
                         source_rows=source_rows,
+                        selected_source_rows=selected_rows,
                         target_rows_before=target_rows_before,
                         target_rows_after=target_rows_after,
                         upserted_rows=upserted_rows,
                         matched=source_rows == target_rows_after,
+                        strategy=selected_strategy,
+                        watermark_column=watermark_column.name if selected_strategy == "delta" else None,
+                        watermark_value=watermark_value.isoformat() if watermark_value else None,
+                        full_bootstrap=full_bootstrap,
                     )
                 )
 

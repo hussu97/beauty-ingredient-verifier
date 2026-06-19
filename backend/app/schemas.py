@@ -154,12 +154,18 @@ class DirectoryGroupOut(BaseModel):
     product_count: int
 
 
+class DirectoryFacetOut(DirectoryGroupOut):
+    selected: bool = False
+
+
 class DirectoryProductRiskOut(BaseModel):
     product: ProductListOut
     severity: str
     score: int
     matched_ingredient_count: int
     side_effects: list[str]
+    source_labels: list[str] = Field(default_factory=list)
+    category_labels: list[str] = Field(default_factory=list)
 
 
 class DirectoryProductsPageOut(BaseModel):
@@ -167,6 +173,9 @@ class DirectoryProductsPageOut(BaseModel):
     total: int
     limit: int
     offset: int
+    sort: str
+    brand_facets: list[DirectoryFacetOut] = Field(default_factory=list)
+    category_facets: list[DirectoryFacetOut] = Field(default_factory=list)
 
 
 class RiskRuleOut(BaseModel):
@@ -209,8 +218,12 @@ class ClinicalProfile(BaseModel):
 
 
 class DirectoryProductsIn(BaseModel):
-    group_kind: str = Field(pattern="^(brand|category)$")
-    group_code: str
+    group_kind: str | None = Field(default=None, pattern="^(brand|category)$")
+    group_code: str | None = None
+    q: str | None = None
+    brand_codes: list[str] = Field(default_factory=list)
+    category_codes: list[str] = Field(default_factory=list)
+    sort: str = Field(default="risk_desc", pattern="^(risk_desc|name_asc|name_desc|brand_asc|confidence_desc)$")
     profile: ClinicalProfile = Field(default_factory=ClinicalProfile)
     limit: int = Field(default=24, ge=1, le=60)
     offset: int = Field(default=0, ge=0)

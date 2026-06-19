@@ -111,11 +111,11 @@ Local SQLite remains canonical for scraper/indexer-owned catalog data. Push idem
 
 ```bash
 cd backend
-sync-local-to-prod --local-db sqlite:///./storage/beauty_product_verifier.sqlite3 --prod-db "$BPV_DATABASE_URL" --tables all --dry-run
-sync-local-to-prod --local-db sqlite:///./storage/beauty_product_verifier.sqlite3 --prod-db "$BPV_DATABASE_URL" --tables all --apply
+sync-local-to-prod --dry-run
+sync-local-to-prod --apply
 ```
 
-Applied syncs are recorded in production `sync_runs`. Runtime/user tables (`scan_jobs`, `scan_candidates`, `risk_evaluations`) are intentionally excluded.
+Set `BPV_SYNC_LOCAL_DATABASE_URL`, `BPV_SYNC_PROD_DATABASE_URL`, `BPV_SYNC_TABLES`, `BPV_SYNC_BATCH_SIZE`, and `BPV_SYNC_STRATEGY` in `backend/.env`, or pass the equivalent CLI flags. Applied syncs are recorded in production `sync_runs`; the default `auto` strategy full-bootstraps a table first, then syncs timestamp deltas where available. Runtime/user tables (`scan_jobs`, `scan_candidates`, `risk_evaluations`) are intentionally excluded.
 When syncing from a laptop to the single-VM Docker deployment, use a private SSH tunnel or another reachable PostgreSQL URL because the production `BPV_DATABASE_URL` host `postgres` is Docker-internal.
 `source_record_facts` sync by stable `fact_code`; repeated record/field/value facts are preserved when they carry distinct product, ingredient, or source URL context.
 
@@ -123,8 +123,8 @@ When syncing from a laptop to the single-VM Docker deployment, use a private SSH
 
 - `GET /api/v1/health`
 - `GET /api/v1/products`
-- `GET /api/v1/products/directory/groups` - supports `kind`, optional `q`, and `limit`.
-- `POST /api/v1/products/directory/products` - returns `{ items, total, limit, offset }` for paginated PLP views.
+- `GET /api/v1/products/directory/groups` - legacy brand/category group lookup with `kind`, optional `q`, and `limit`.
+- `POST /api/v1/products/directory/products` - unified PLP listing with search, `brand_codes`, `category_codes`, `sort`, pagination, and brand/category facet counts.
 - `GET /api/v1/products/{product_code}`
 - `GET /api/v1/ingredients`
 - `GET /api/v1/ingredients/{ingredient_code}`

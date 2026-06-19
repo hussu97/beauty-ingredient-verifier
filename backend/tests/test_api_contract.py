@@ -38,20 +38,10 @@ def test_product_and_ingredient_detail(client):
     assert ingredient.json()["ingredient_code"] == ingredient_code
 
 
-def test_directory_groups_and_ranked_products(client):
-    groups = client.get("/api/v1/products/directory/groups?kind=brand")
-    assert groups.status_code == 200
-    body = groups.json()
-    assert body
-    assert body[0]["kind"] == "brand"
-    assert body[0]["code"].startswith("brd_")
-    assert body[0]["product_count"] >= 1
-
+def test_directory_products_support_filters_facets_and_sort(client):
     products = client.post(
         "/api/v1/products/directory/products",
         json={
-            "group_kind": "brand",
-            "group_code": body[0]["code"],
             "profile": {"skin_types": ["sensitive"], "sensitivities": ["fragrance"]},
             "limit": 5,
         },
@@ -60,19 +50,22 @@ def test_directory_groups_and_ranked_products(client):
     page = products.json()
     assert page["limit"] == 5
     assert page["offset"] == 0
-    assert page["total"] == body[0]["product_count"]
+    assert page["sort"] == "risk_desc"
+    assert page["total"] >= 1
+    assert page["brand_facets"]
+    assert page["category_facets"]
     ranked = page["items"]
     assert ranked
     assert ranked[0]["product"]["product_code"].startswith("prd_")
     assert ranked[0]["severity"] in {"unknown", "minimal", "low", "moderate", "high", "critical"}
     assert "matched_ingredient_count" in ranked[0]
+    assert "source_labels" in ranked[0]
+    assert "category_labels" in ranked[0]
 
     if page["total"] > 1:
         second_page = client.post(
             "/api/v1/products/directory/products",
             json={
-                "group_kind": "brand",
-                "group_code": body[0]["code"],
                 "profile": {"skin_types": ["sensitive"], "sensitivities": ["fragrance"]},
                 "limit": 1,
                 "offset": 1,
@@ -83,10 +76,49 @@ def test_directory_groups_and_ranked_products(client):
         assert second_body["offset"] == 1
         assert len(second_body["items"]) <= 1
 
-    searched = client.get(f"/api/v1/products/directory/groups?kind=brand&q={body[0]['name'][:3]}")
+    brand = page["brand_facets"][0]
+    brand_filtered = client.post(
+        "/api/v1/products/directory/products",
+        json={
+            "brand_codes": [brand["code"]],
+            "profile": {"skin_types": ["sensitive"], "sensitivities": ["fragrance"]},
+            "limit": 5,
+        },
+    )
+    assert brand_filtered.status_code == 200
+    brand_body = brand_filtered.json()
+    assert brand_body["total"] == brand["product_count"]
+    assert any(facet["code"] == brand["code"] and facet["selected"] for facet in brand_body["brand_facets"])
+
+    category = brand_body["category_facets"][0]
+    category_filtered = client.post(
+        "/api/v1/products/directory/products",
+        json={
+            "brand_codes": [brand["code"]],
+            "category_codes": [category["code"]],
+            "profile": {"skin_types": ["sensitive"], "sensitivities": ["fragrance"]},
+            "limit": 5,
+        },
+    )
+    assert category_filtered.status_code == 200
+    category_body = category_filtered.json()
+    assert category_body["total"] == category["product_count"]
+    assert any(facet["code"] == category["code"] and facet["selected"] for facet in category_body["category_facets"])
+
+    search_term = ranked[0]["product"]["name"].split()[0]
+    searched = client.post(
+        "/api/v1/products/directory/products",
+        json={
+            "q": search_term,
+            "sort": "name_asc",
+            "profile": {"skin_types": ["sensitive"], "sensitivities": ["fragrance"]},
+            "limit": 10,
+        },
+    )
     assert searched.status_code == 200
     searched_body = searched.json()
-    assert any(group["code"] == body[0]["code"] for group in searched_body)
+    names = [item["product"]["name"].lower() for item in searched_body["items"]]
+    assert names == sorted(names)
 
 
 def test_import_status_and_sources(client):

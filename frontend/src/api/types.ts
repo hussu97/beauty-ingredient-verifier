@@ -116,12 +116,30 @@ export type DirectoryGroup = {
   product_count: number;
 };
 
+export type DirectoryFacet = DirectoryGroup & {
+  selected: boolean;
+};
+
+export type DirectorySort = "risk_desc" | "name_asc" | "name_desc" | "brand_asc" | "confidence_desc";
+
+export type DirectoryProductFilters = {
+  q?: string;
+  brand_codes?: string[];
+  category_codes?: string[];
+  sort?: DirectorySort;
+  profile: ClinicalProfile;
+  limit: number;
+  offset: number;
+};
+
 export type DirectoryProductRisk = {
   product: Product;
   severity: string;
   score: number;
   matched_ingredient_count: number;
   side_effects: string[];
+  source_labels: string[];
+  category_labels: string[];
 };
 
 export type DirectoryProductsPage = {
@@ -129,6 +147,9 @@ export type DirectoryProductsPage = {
   total: number;
   limit: number;
   offset: number;
+  sort: DirectorySort;
+  brand_facets: DirectoryFacet[];
+  category_facets: DirectoryFacet[];
 };
 
 export type RiskRule = {

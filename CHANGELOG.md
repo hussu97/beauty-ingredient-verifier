@@ -1,8 +1,25 @@
 # Changelog
 
+## 2026-06-19
+
+### Backend
+- Reworked `POST /products/directory/products` into the unified directory listing endpoint with search, multi-brand filters, multi-category filters, sort, pagination, source/category labels, and brand/category facet counts.
+- Reduced PLP query fanout by using SQLAlchemy filtered/grouped queries plus select-in eager loading and batch risk summary calculation for returned page products.
+
+### Frontend
+- Replaced the old separate brand/category directory selector with a single ecommerce-style PLP containing search, facet filters with counts, sort controls, pagination, product images, source labels, and profile-aware warning badges.
+
+### Docs
+- Updated README, ARCHITECTURE, and PRODUCTION to document the single PLP endpoint and note that no new environment variables are required.
+
+### Tests
+- Added backend coverage for directory filters, sort, selected facets, and facet counts.
+- Added frontend coverage for the unified directory API payload and PLP control rendering.
+
 ## 2026-06-18
 
 ### Backend
+- Optimized `sync-local-to-prod` with env-backed defaults, `auto`/`full`/`delta` strategies, timestamp-watermark delta selection after safe full bootstrap, richer per-table run metadata, and PostgreSQL temp-table/COPY bulk upserts.
 - Widened ingredient display, normalized, INCI, raw product-ingredient, ingredient source external ID, and canonical term slug/label columns to `TEXT` so production PostgreSQL can accept long source-derived catalog text during local-to-prod sync without truncation.
 - Changed `source_record_facts` record/field/value lookup from unique to non-unique so multiple product/ingredient-context facts from the same source record are preserved during production sync.
 - Added production deployment implementation: API Docker image now installs only serving ML extras, local scraper/indexer pipeline images are split out, and production Compose runs FastAPI, pgvector Postgres, and Caddy on one VM.

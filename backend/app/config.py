@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     ocr_language: str = "en"
     image_embedding_model: str = "sentence-transformers/clip-ViT-B-32"
     image_download_timeout_seconds: float = 20.0
+    sync_local_database_url: str | None = None
+    sync_prod_database_url: str | None = None
+    sync_tables: str = "all"
+    sync_batch_size: int = Field(default=500, ge=1)
+    sync_strategy: str = "auto"
     max_scan_upload_mb: int = Field(default=12, ge=1, le=100)
     ewg_attribution_text: str = "Contains information from EWG Skin Deep."
     ewg_user_agent: str = "BeautyProductVerifier/0.1 (local-dev@example.com)"

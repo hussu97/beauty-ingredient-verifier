@@ -22,6 +22,8 @@ Create the Vercel project `beauty-ingredient-verifier` from `frontend/`.
 
 `frontend/vercel.json` rewrites SPA routes to `index.html`. Keep frontend secrets in Vercel only; do not copy backend database or deploy secrets into Vercel. The frontend includes `frontend/src/data/profile-options.json`, a vendored copy of `shared/profile-options.json`, because Vercel builds are rooted at `frontend/`.
 
+The production `/directory` page uses `POST /api/v1/products/directory/products` as the single PLP listing endpoint for search, brand/category filters, sort, pagination, and facet counts. No additional frontend or backend environment variables are required beyond `VITE_API_BASE_URL` and the existing API/database settings below.
+
 ## GCP VM Bootstrap
 
 1. Create the VM in `us-central1` unless a cheaper equivalent region is deliberately chosen for the whole stack.
@@ -99,25 +101,26 @@ Local product image downloads stay under `backend/storage/product-images`. Produ
 
 ## Local To Production Sync
 
-Run Alembic first, then sync idempotent table upserts:
+Set sync defaults in `backend/.env` on the local operator machine. Keep `BPV_DATABASE_URL` pointed at local SQLite for scraper/indexer commands; `BPV_SYNC_PROD_DATABASE_URL` is the separate reachable production Postgres URL used only by sync.
+
+```bash
+BPV_SYNC_LOCAL_DATABASE_URL=sqlite:///./storage/beauty_product_verifier.sqlite3
+BPV_SYNC_PROD_DATABASE_URL=postgresql+psycopg://bpv:...@127.0.0.1:5432/beauty_product_verifier
+BPV_SYNC_TABLES=all
+BPV_SYNC_BATCH_SIZE=500
+BPV_SYNC_STRATEGY=auto
+```
+
+Run Alembic first, then sync idempotent table upserts. CLI flags override `.env` values:
 
 ```bash
 cd backend
 source .venv/bin/activate
-sync-local-to-prod \
-  --local-db sqlite:///./storage/beauty_product_verifier.sqlite3 \
-  --prod-db "$BPV_DATABASE_URL" \
-  --tables all \
-  --dry-run
-
-sync-local-to-prod \
-  --local-db sqlite:///./storage/beauty_product_verifier.sqlite3 \
-  --prod-db "$BPV_DATABASE_URL" \
-  --tables all \
-  --apply
+sync-local-to-prod --dry-run
+sync-local-to-prod --apply
 ```
 
-The sync writes `sync_runs` rows in production for applied runs and refreshes the Postgres `image_embedding_vectors` pgvector index after `image_embeddings` are synced.
+The sync writes `sync_runs` rows in production for applied runs and refreshes the Postgres `image_embedding_vectors` pgvector index after `image_embeddings` are synced. The default `auto` strategy performs a full bootstrap when no prior successful run exists for a table, then selects deltas from `updated_at`, `created_at`, `fetched_at`, or `source_updated_at` where present. Tables without a timestamp continue to full-upsert. PostgreSQL targets use per-batch temporary tables with COPY when the driver supports it.
 For laptop-driven syncs into the single-VM Docker stack, connect through a private SSH tunnel or another reachable PostgreSQL URL; the VM `.env` `BPV_DATABASE_URL` uses the Docker-internal `postgres` hostname.
 Do not deduplicate `source_record_facts` by record/field/value before sync; repeated facts can carry distinct product, ingredient, or source URL context and are keyed by `fact_code`.
 
@@ -141,8 +144,6 @@ Validate after sync:
 
 ```bash
 sync-local-to-prod \
-  --local-db sqlite:///./storage/beauty_product_verifier.sqlite3 \
-  --prod-db "$BPV_DATABASE_URL" \
   --tables all \
   --validate-only
 ```
@@ -185,6 +186,11 @@ cat bpv-prod.sql | docker compose --env-file /opt/bpv/.env -f /opt/bpv/docker-co
 | `BPV_OCR_LANGUAGE` | Backend | No | `en` | PaddleOCR language when OCR deps are installed. |
 | `BPV_IMAGE_EMBEDDING_MODEL` | Backend/jobs | No | `sentence-transformers/clip-ViT-B-32` | CLIP/Sentence Transformers model. |
 | `BPV_IMAGE_DOWNLOAD_TIMEOUT_SECONDS` | Jobs | No | `20` | Product image download timeout for indexing. |
+| `BPV_SYNC_LOCAL_DATABASE_URL` | Jobs | No | none | Local canonical SQLite URL for `sync-local-to-prod`; falls back to `BPV_DATABASE_URL`. |
+| `BPV_SYNC_PROD_DATABASE_URL` | Jobs | Yes for sync | none | Reachable production Postgres URL for `sync-local-to-prod`. |
+| `BPV_SYNC_TABLES` | Jobs | No | `all` | Comma-separated sync tables or `all`; runtime tables remain blocked. |
+| `BPV_SYNC_BATCH_SIZE` | Jobs | No | `500` | Batch size for local-to-prod upserts. |
+| `BPV_SYNC_STRATEGY` | Jobs | No | `auto` | One of `auto`, `full`, or `delta`; `auto` full-bootstraps then uses timestamp deltas. |
 | `BPV_EWG_ATTRIBUTION_TEXT` | Backend/frontend | No | `Contains information from EWG Skin Deep.` | Attribution text wherever EWG data is surfaced. |
 | `BPV_EWG_USER_AGENT` | Jobs | Yes for EWG import | `BeautyProductVerifier/0.1 (local-dev@example.com)` | Polite EWG/archive import UA. |
 | `BPV_API_IMAGE` | Compose | Yes in prod | none | GHCR image tag deployed by Actions. |
