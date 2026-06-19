@@ -166,7 +166,7 @@ If validation reports row-count mismatches, inspect whether production has stale
 
 ## API Latency Notes
 
-The directory PLP endpoint (`POST /api/v1/products/directory/products`) should stay responsive on the full catalog. Its default `risk_desc` sort evaluates profile-aware risk over a bounded candidate window instead of running a production-wide product/ingredient/risk-rule group-by before pagination.
+The directory PLP endpoint (`POST /api/v1/products/directory/products`) should stay responsive on the full catalog. Its default listing uses indexed product pagination and computes compact risk summaries only for the returned page instead of running a production-wide product/ingredient/risk-rule group-by before pagination.
 
 ## Backup And Restore
 

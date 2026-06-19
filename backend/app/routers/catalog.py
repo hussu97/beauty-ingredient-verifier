@@ -30,9 +30,6 @@ from app.services.risk import SEVERITY_LABELS, _rule_applies
 from app.services.source_fusion import normalized_product_attributes, product_source_conflicts
 
 router = APIRouter(prefix="/products", tags=["catalog"])
-RISK_SORT_CANDIDATE_FLOOR = 500
-RISK_SORT_CANDIDATE_MULTIPLIER = 8
-RISK_SORT_CANDIDATE_CEILING = 2500
 
 
 def _product_options() -> tuple:
@@ -344,12 +341,6 @@ def _category_facets(db: Session, payload: DirectoryProductsIn) -> list[Director
     ]
 
 
-def _risk_sort_candidate_limit(payload: DirectoryProductsIn, total: int) -> int:
-    requested_window = payload.offset + (payload.limit * RISK_SORT_CANDIDATE_MULTIPLIER)
-    bounded_window = min(max(requested_window, RISK_SORT_CANDIDATE_FLOOR), RISK_SORT_CANDIDATE_CEILING)
-    return min(total, bounded_window)
-
-
 def _risk_sorted_product_codes(
     db: Session,
     payload: DirectoryProductsIn,
@@ -357,35 +348,17 @@ def _risk_sorted_product_codes(
     filters: list,
     total: int,
 ) -> list[str]:
-    candidate_limit = _risk_sort_candidate_limit(payload, total)
-    if candidate_limit <= 0:
+    if total <= 0:
         return []
 
-    candidate_rows = db.execute(
-        select(Product.product_code, Product.normalized_name)
+    return db.scalars(
+        select(Product.product_code)
         .outerjoin(Brand, Product.brand_code == Brand.brand_code)
         .where(*filters)
         .order_by(desc(Product.confidence_score), Product.normalized_name, Product.product_code)
-        .limit(candidate_limit)
+        .offset(payload.offset)
+        .limit(payload.limit)
     ).all()
-    candidate_codes = [row.product_code for row in candidate_rows]
-    if not candidate_codes:
-        return []
-
-    risk_by_code = _directory_risk_summaries(db, candidate_codes)
-    ordered_candidates = list(candidate_rows)
-    ordered_candidates.sort(
-        key=lambda row: (
-            -risk_by_code[row.product_code]["score"],
-            -risk_by_code[row.product_code]["matched_ingredient_count"],
-            row.normalized_name,
-            row.product_code,
-        )
-    )
-    return [
-        row.product_code
-        for row in ordered_candidates[payload.offset : payload.offset + payload.limit]
-    ]
 
 
 @router.get("", response_model=list[ProductListOut])

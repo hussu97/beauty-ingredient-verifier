@@ -64,7 +64,7 @@ The scanner uses progressive matching:
 5. sqlite-vec KNN search locally when installed; Python cosine search over stored JSON vectors is the portable fallback.
 6. pgvector KNN search in production Postgres when synced image embeddings are available.
 
-Each step contributes reasons and confidence. Text search uses indexed database candidate generation before RapidFuzz scoring instead of scanning a fixed in-memory product slice, so new catalog volume remains discoverable. CLIP uses sqlite-vec when available; the portable Python cosine fallback is capped for large embedding sets to avoid request-time full table scans. Directory product listing follows the same rule: risk sorting computes profile-aware risk over a bounded candidate window instead of running a production-wide product/ingredient/rule aggregate before pagination. If confidence is low, the UI shows candidate choices and can still evaluate OCR-detected ingredients.
+Each step contributes reasons and confidence. Text search uses indexed database candidate generation before RapidFuzz scoring instead of scanning a fixed in-memory product slice, so new catalog volume remains discoverable. CLIP uses sqlite-vec when available; the portable Python cosine fallback is capped for large embedding sets to avoid request-time full table scans. Directory product listing follows the same rule: the default listing uses indexed product pagination and computes compact risk summaries only for the returned page instead of running a production-wide product/ingredient/rule aggregate before pagination. If confidence is low, the UI shows candidate choices and can still evaluate OCR-detected ingredients.
 
 ## Deployment Architecture
 
