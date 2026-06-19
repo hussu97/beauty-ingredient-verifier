@@ -11,6 +11,7 @@ A local-first MVP for building an automated beauty product and ingredient databa
 - `docs/` - implementation notes and future research.
 - `scripts/` - convenience scripts for local development.
 - `ARCHITECTURE.md` - system model, data flow, and source strategy.
+- `vercel.json` / `frontend/vercel.json` - Vercel frontend deployment configs for repo-root and `frontend/`-rooted projects.
 - `PRODUCTION.md` - Docker, Vercel, and GCP deployment notes plus env vars.
 
 ## Local Setup
@@ -168,6 +169,6 @@ cd frontend && npm test -- --run && npm run build
 
 ## Deployment
 
-Production v1 uses Vercel for `frontend/` and one GCP Compute Engine VM for the API, Postgres, pgvector, and Caddy TLS. The backend deploy workflow builds the lightweight API image with serving ML dependencies only; scraper/indexer dependencies stay in local pipeline images. See `PRODUCTION.md` for VM sizing, GitHub Secrets, Vercel setup, sync, and backup/restore runbooks.
+Production v1 uses Vercel for `frontend/` and one GCP Compute Engine VM for the API, Postgres, pgvector, and Caddy TLS. The root `vercel.json` explicitly builds `frontend/` as Vite for repo-root Vercel projects; `frontend/vercel.json` carries the same SPA settings for projects rooted directly at `frontend/`. The backend deploy workflow builds the lightweight API image with serving ML dependencies only; scraper/indexer dependencies stay in local pipeline images. See `PRODUCTION.md` for VM sizing, GitHub Secrets, Vercel setup, sync, and backup/restore runbooks.
 
 Production frontend and backend builds initialize Sentry for the `melting-moments` org when their environment is `production`. Local runs keep Sentry disabled unless production env labels are explicitly set.

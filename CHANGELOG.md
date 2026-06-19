@@ -12,11 +12,13 @@
 - Added bounded Wayback CDX discovery retries to the EWG importer via `--cdx-timeout` and `--cdx-max-failures`, so archive.org outages abort cleanly and can be resumed instead of hanging indefinitely.
 
 ### Frontend
+- Added a repo-root Vercel config that forces Vite and builds `frontend/`, preventing Vercel projects with a stale Services framework preset from failing before build.
 - Removed the obsolete directory group type now that PLP filters use returned facet objects directly.
 - Added production-only Sentry initialization for React with a top-level error boundary and trace sample-rate configuration.
 - Replaced the old separate brand/category directory selector with a single ecommerce-style PLP containing search, facet filters with counts, sort controls, pagination, product images, source labels, and profile-aware warning badges.
 
 ### Docs
+- Clarified Vercel repo-root versus `frontend/`-root deployment settings and noted that the Services framework preset should not be used.
 - Removed the legacy directory group endpoint from the public API list.
 - Documented backend and frontend profile-vocabulary vendoring for isolated production build contexts.
 - Documented best-effort PDP risk evaluation audit persistence in README, architecture, and production notes.

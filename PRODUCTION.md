@@ -13,10 +13,12 @@ Production does not require GCS in v1. Product images are stored as source URLs 
 
 ## Vercel Frontend
 
-Create the Vercel project `beauty-ingredient-verifier` from `frontend/`.
+Create the Vercel project `beauty-ingredient-verifier` from either the repository root or `frontend/`. The root `vercel.json` is for repo-root projects and explicitly sets the Framework Preset to Vite while running the build inside `frontend/`; `frontend/vercel.json` is for projects whose Vercel Root Directory is already `frontend/`. Do not use the Services framework preset for this app.
 
-- Build command: `npm run build`
-- Output directory: `dist`
+- Repo-root build command: `cd frontend && npm run build`
+- Repo-root output directory: `frontend/dist`
+- `frontend/` root build command: `npm run build`
+- `frontend/` root output directory: `dist`
 - Framework: Vite
 - Env: `VITE_API_BASE_URL=https://<api-domain>/api/v1`
 - Sentry: production builds initialize the frontend Sentry project for org `melting-moments` (`4511214385364992`) with `VITE_SENTRY_DSN`; the checked-in production fallback DSN is `https://4321d8269749044df11524e167d5f267@o4511214385364992.ingest.us.sentry.io/4511591614644224`.
